@@ -145,31 +145,22 @@ class iSubscribeReminder(_PluginBase):
                     current_movie_subscribe.append({
                         'name': f"{subscribe.name} ({subscribe.year})"
                     })
+                     # 如当前日期匹配到订阅，则发送通知
+        notification_image_path = "https://115.com/web_icon.jpg"
+        text = ""
+        for sub in current_tv_subscribe:
+            text += sub.get("name") + "\n"
+            text += sub.get("season") + sub.get("episode") + "\n"
+            text += "\n"
 
-       # 假设你有一个存储通知图片路径的变量
-            notification_image_path = "https://115.com/web_icon.jpg"
+        for sub in current_movie_subscribe:
+            text += sub.get("name") + "\n"
+            text += "\n"
 
-       # 构建通知文本
-            text = ""
-
-       # 处理电视剧订阅信息
-            for sub in current_tv_subscribe:
-                text += f"📺 {sub.get('name')}\n"
-                text += f"   {sub.get('season')}季 {sub.get('episode')}集\n"
-                text += "\n"
-
-       # 处理电影订阅信息
-            for sub in current_movie_subscribe:
-                text += f"🎬 {sub.get('name')}\n"
-                text += "\n"
-
-       # 发送通知
-            if text:
-                self.post_message(mtype=NotificationType.Subscribe,
-                                  title=f"{current_date}订阅提醒",
-                                  text=text,
-                                  image_path=notification_image_path)
-
+        if text:
+            self.post_message(mtype=NotificationType.Subscribe,
+                              title=f"{current_date}订阅提醒",
+                              text=text)
 
     def get_state(self) -> bool:
         return self._enabled
