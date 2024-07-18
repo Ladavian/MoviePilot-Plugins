@@ -1,0 +1,10 @@
+{
+    "UserSign115": {
+        "name": "115签到",
+        "description": "115自动签到",
+        "version": "1.4",
+        "icon": "https://115.com/web_icon.jpg",
+        "author": "Ladavian",
+        "level": 1
+    }
+}
