@@ -20,9 +20,9 @@ class iSubscribeReminder(_PluginBase):
     # 插件描述
     plugin_desc = "推送当天订阅更新内容,改自thsrite大佬的订阅通知，向大佬致敬。"
     # 插件图标
-    plugin_icon = "https://raw.githubusercontent.com/thsrite/MoviePilot-Plugins/main/icons/subscribe_reminder.png"
+    plugin_icon = "https://115.com/web_icon.jpg"
     # 插件版本
-    plugin_version = "1.1"
+    plugin_version = "1.0"
     # 插件作者
     plugin_author = "Ladavian"
     # 作者主页
