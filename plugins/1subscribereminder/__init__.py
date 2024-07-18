@@ -14,7 +14,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.schemas import NotificationType, MediaType
 
 
-class 1SubscribeReminder(_PluginBase):
+class SubscribeReminder(_PluginBase):
     # 插件名称
     plugin_name = "追剧通知"
     # 插件描述
@@ -28,7 +28,7 @@ class 1SubscribeReminder(_PluginBase):
     # 作者主页
     author_url = "https://github.com/Ladavian"
     # 插件配置项ID前缀
-    plugin_config_prefix = "1subscribereminder_"
+    plugin_config_prefix = "subscribereminder_"
     # 加载顺序
     plugin_order = 33
     # 可使用的用户级别
