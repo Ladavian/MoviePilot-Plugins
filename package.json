@@ -1,20 +1,20 @@
 {
-    "UserSign115": {
-        "name": "115签到",
-        "description": "115自动签到",
-        "version": "1.4",
-        "icon": "https://115.com/web_icon.jpg",
-        "author": "jianxcao",
-        "level": 1,
-        "v2": true
-    }
+  "UserSign115": {
+    "name": "115签到",
+    "description": "115自动签到",
+    "version": "1.4",
+    "icon": "https://115.com/web_icon.jpg",
+    "author": "jianxcao",
+    "level": 1,
+    "v2": true
+  },
   "SubscribeNotification": {
     "name": "提醒订阅",
     "description": "推送当天订阅更新内容。",
     "labels": "订阅",
     "version": "1.2",
     "icon": "https://raw.githubusercontent.com/jianxcao/MoviePilot-extension/main/img/sub-alert.png",
-    "author": "jianxcao,thsrite",
+    "author": "jianxcao, thsrite",
     "level": 1,
     "v2": true,
     "history": {
@@ -37,26 +37,26 @@
       "v1.1": "默认图片调用 tmd 或者 bing 每日图片"
     }
   },
- "MaoyanRank": {
-        "name": "猫眼榜单订阅",
-        "description": "监控猫眼数据，自动添加订阅。",
-        "version": "0.8",
-        "icon": "https://raw.githubusercontent.com/baozaodetudou/MoviePilot-Plugins/main/icons/maoyan.jpg",
-        "color": "#fefefe",
-        "author": "逗猫",
-        "v2": true,
-        "level": 2,
-        "history": {
-            "v1.0": "修复使用缓存进行订阅搜索集数不全的问题",
-            "v0.7": "界面点击名称跳转TMDB",
-            "v0.6": "更改图标",
-            "v0.5": "更改爬取方式，提高成功率",
-            "v0.4": "电视剧订阅添加去重",
-            "v0.3": "增加平台分类",
-            "v0.2": "电视剧电影以及综艺的分类",
-            "v0.1": "初始化版本猫眼订阅功能"
-          }
-    },
+  "MaoyanRank": {
+    "name": "猫眼榜单订阅",
+    "description": "监控猫眼数据，自动添加订阅。",
+    "version": "0.8",
+    "icon": "https://raw.githubusercontent.com/baozaodetudou/MoviePilot-Plugins/main/icons/maoyan.jpg",
+    "color": "#fefefe",
+    "author": "逗猫",
+    "level": 2,
+    "v2": true,
+    "history": {
+      "v1.0": "修复使用缓存进行订阅搜索集数不全的问题",
+      "v0.7": "界面点击名称跳转TMDB",
+      "v0.6": "更改图标",
+      "v0.5": "更改爬取方式，提高成功率",
+      "v0.4": "电视剧订阅添加去重",
+      "v0.3": "增加平台分类",
+      "v0.2": "电视剧、电影以及综艺的分类",
+      "v0.1": "初始化版本猫眼订阅功能"
+    }
+  },
   "DoubanRankPlus": {
     "name": "豆瓣榜单订阅Plus",
     "description": "自动订阅豆瓣热门榜单增强版",
