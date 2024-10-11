@@ -4,7 +4,8 @@
         "description": "115自动签到",
         "version": "1.4",
         "icon": "https://115.com/web_icon.jpg",
-        "author": "某位大佬",
-        "level": 1
+        "author": "jianxcao",
+        "level": 1,
+        "v2": true
     }
 }
