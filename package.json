@@ -8,7 +8,7 @@
         "level": 1,
         "v2": true
     }
-}，
+},
 {
   "SubscribeNotification": {
     "name": "提醒订阅",
@@ -41,7 +41,7 @@
       "v1.1": "默认图片调用 tmd 或者 bing 每日图片"
     }
   }
-}，
+},
 {
  "MaoyanRank": {
         "name": "猫眼榜单订阅",
