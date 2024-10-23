@@ -6,7 +6,7 @@
         "icon": "https://115.com/web_icon.jpg",
         "author": "jianxcao",
         "level": 1,
-        "v2": True
+        "v2": true
     },
     "SubscribeNotification": {
         "name": "提醒订阅",
@@ -16,7 +16,7 @@
         "icon": "https://raw.githubusercontent.com/jianxcao/MoviePilot-extension/main/img/sub-alert.png",
         "author": "jianxcao, thsrite",
         "level": 1,
-        "v2": True,
+        "v2": true,
         "history": {
             "v1.0": "推送当天订阅更新内容",
             "v1.1": "新增图片选项，取图从 backdrop中取",
@@ -31,7 +31,7 @@
         "icon": "https://raw.githubusercontent.com/gxterry/MoviePilot-Plugins/main/icons/Docker_Copilot.png",
         "author": "gxterry",
         "level": 1,
-        "v2": True,
+        "v2": true,
         "history": {
             "v1.1.2": "修复网络异常导致的数据无法加载问题",
             "v1.1.1": "修复面板加载异常"
@@ -45,7 +45,7 @@
         "icon": "https://raw.githubusercontent.com/jianxcao/MoviePilot-extension/main/img/img.png",
         "author": "jianxcao",
         "level": 1,
-        "v2": True,
+        "v2": true,
         "history": {
             "v1.0": "首个版本",
             "v1.1": "默认图片调用 tmd 或者 bing 每日图片"
@@ -59,7 +59,7 @@
         "color": "#fefefe",
         "author": "逗猫",
         "level": 2,
-        "v2": True,
+        "v2": true,
         "history": {
             "v1.0": "修复使用缓存进行订阅搜索集数不全的问题",
             "v0.7": "界面点击名称跳转TMDB",
@@ -79,7 +79,7 @@
         "icon": "mediaplay.png",
         "author": "jxxghp",
         "level": 1,
-        "v2": True,
+        "v2": true,
         "history": {
             "v1.4": "MoviePilot V2 版本媒体库服务器通知插件"
         }
@@ -92,7 +92,7 @@
         "icon": "https://raw.githubusercontent.com/boeto/MoviePilot-Plugins/main/icons/DouBanRankPlus.png",
         "author": "boeto",
         "level": 2,
-        "v2": True,
+        "v2": true,
         "history": {
             "v0.0.15": "fix: 处理历史记录为None",
             "v0.0.14": "perf: 更新icon",
