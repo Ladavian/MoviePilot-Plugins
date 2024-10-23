@@ -1,29 +1,29 @@
 {
-  "UserSign115": {
-    "name": "115签到",
-    "description": "115自动签到",
-    "version": "1.4",
-    "icon": "https://115.com/web_icon.jpg",
-    "author": "jianxcao",
-    "level": 1,
-    "v2": true
-  },
-  "SubscribeNotification": {
-    "name": "提醒订阅",
-    "description": "推送当天订阅更新内容。",
-    "labels": "订阅",
-    "version": "1.2",
-    "icon": "https://raw.githubusercontent.com/jianxcao/MoviePilot-extension/main/img/sub-alert.png",
-    "author": "jianxcao, thsrite",
-    "level": 1,
-    "v2": true,
-    "history": {
-      "v1.0": "推送当天订阅更新内容",
-      "v1.1": "新增图片选项，取图从 backdrop中取",
-      "v1.2": "添加小图标"
-    }
-  },
-  "DockerCopilotHelper": {
+    "UserSign115": {
+        "name": "115签到",
+        "description": "115自动签到",
+        "version": "1.4",
+        "icon": "https://115.com/web_icon.jpg",
+        "author": "jianxcao",
+        "level": 1,
+        "v2": True
+    },
+    "SubscribeNotification": {
+        "name": "提醒订阅",
+        "description": "推送当天订阅更新内容。",
+        "labels": "订阅",
+        "version": "1.2",
+        "icon": "https://raw.githubusercontent.com/jianxcao/MoviePilot-extension/main/img/sub-alert.png",
+        "author": "jianxcao, thsrite",
+        "level": 1,
+        "v2": True,
+        "history": {
+            "v1.0": "推送当天订阅更新内容",
+            "v1.1": "新增图片选项，取图从 backdrop中取",
+            "v1.2": "添加小图标"
+        }
+    },
+    "DockerCopilotHelper": {
         "name": "DC助手",
         "description": "配合DockerCopilot,完成更新通知、自动更新、自动备份功能",
         "labels": "Docker",
@@ -31,47 +31,47 @@
         "icon": "https://raw.githubusercontent.com/gxterry/MoviePilot-Plugins/main/icons/Docker_Copilot.png",
         "author": "gxterry",
         "level": 1,
-        "v2": true,
+        "v2": True,
         "history": {
             "v1.1.2": "修复网络异常导致的数据无法加载问题",
             "v1.1.1": "修复面板加载异常"
         }
     },
-  "UserDefaultMsgImg": {
-    "name": "通知默认图片设置",
-    "description": "可以将通知设置一个默认的图片",
-    "labels": "工具",
-    "version": "1.1",
-    "icon": "https://raw.githubusercontent.com/jianxcao/MoviePilot-extension/main/img/img.png",
-    "author": "jianxcao",
-    "level": 1,
-    "v2": true,
-    "history": {
-      "v1.0": "首个版本",
-      "v1.1": "默认图片调用 tmd 或者 bing 每日图片"
-    }
-  },
-  "MaoyanRank": {
-    "name": "猫眼榜单订阅",
-    "description": "监控猫眼数据，自动添加订阅。",
-    "version": "0.8",
-    "icon": "https://raw.githubusercontent.com/baozaodetudou/MoviePilot-Plugins/main/icons/maoyan.jpg",
-    "color": "#fefefe",
-    "author": "逗猫",
-    "level": 2,
-    "v2": true,
-    "history": {
-      "v1.0": "修复使用缓存进行订阅搜索集数不全的问题",
-      "v0.7": "界面点击名称跳转TMDB",
-      "v0.6": "更改图标",
-      "v0.5": "更改爬取方式，提高成功率",
-      "v0.4": "电视剧订阅添加去重",
-      "v0.3": "增加平台分类",
-      "v0.2": "电视剧、电影以及综艺的分类",
-      "v0.1": "初始化版本猫眼订阅功能"
-    }
-  },
-  "MediaServerMsg": {
+    "UserDefaultMsgImg": {
+        "name": "通知默认图片设置",
+        "description": "可以将通知设置一个默认的图片",
+        "labels": "工具",
+        "version": "1.1",
+        "icon": "https://raw.githubusercontent.com/jianxcao/MoviePilot-extension/main/img/img.png",
+        "author": "jianxcao",
+        "level": 1,
+        "v2": True,
+        "history": {
+            "v1.0": "首个版本",
+            "v1.1": "默认图片调用 tmd 或者 bing 每日图片"
+        }
+    },
+    "MaoyanRank": {
+        "name": "猫眼榜单订阅",
+        "description": "监控猫眼数据，自动添加订阅。",
+        "version": "0.8",
+        "icon": "https://raw.githubusercontent.com/baozaodetudou/MoviePilot-Plugins/main/icons/maoyan.jpg",
+        "color": "#fefefe",
+        "author": "逗猫",
+        "level": 2,
+        "v2": True,
+        "history": {
+            "v1.0": "修复使用缓存进行订阅搜索集数不全的问题",
+            "v0.7": "界面点击名称跳转TMDB",
+            "v0.6": "更改图标",
+            "v0.5": "更改爬取方式，提高成功率",
+            "v0.4": "电视剧订阅添加去重",
+            "v0.3": "增加平台分类",
+            "v0.2": "电视剧、电影以及综艺的分类",
+            "v0.1": "初始化版本猫眼订阅功能"
+        }
+    },
+    "MediaServerMsg": {
         "name": "emby服务器通知",
         "description": "发送Emby/Jellyfin/Plex服务器的播放、入库等通知消息。",
         "labels": "消息通知,媒体库",
@@ -79,36 +79,36 @@
         "icon": "mediaplay.png",
         "author": "jxxghp",
         "level": 1,
-        "v2": true,
+        "v2": True,
         "history": {
             "v1.4": "MoviePilot V2 版本媒体库服务器通知插件"
         }
     },
-  "DoubanRankPlus": {
-    "name": "豆瓣榜单订阅Plus",
-    "description": "自动订阅豆瓣热门榜单增强版",
-    "labels": "订阅",
-    "version": "0.0.15",
-    "icon": "https://raw.githubusercontent.com/boeto/MoviePilot-Plugins/main/icons/DouBanRankPlus.png",
-    "author": "boeto",
-    "level": 2,
-    "v2": true,
-    "history": {
-      "v0.0.15": "fix: 处理历史记录为None",
-      "v0.0.14": "perf: 更新icon",
-      "v0.0.13": "perf: 更新icon",
-      "v0.0.12": "perf: 优先使用原标题匹配TMDB信息",
-      "v0.0.11": "fix: unique_flag处理记录",
-      "v0.0.10": "perf: 优化rssinfo识别和历史记录处理判定",
-      "v0.0.9": "fix: 从rss地址中获取类型",
-      "v0.0.8": "feat: 增加豆瓣IP限制后结束任务选项",
-      "v0.0.7": "fix: 添加变量初始值",
-      "v0.0.6": "feat: 增加豆瓣IP限制后切换识别源，历史面板分类显示，历史数据统计",
-      "v0.0.5": "feat: 增加随机休眠时间，增加历史处理状态记录，增加清空失败历史功能",
-      "v0.0.4": "fix: 修正影视类型匹配",
-      "v0.0.3": "refactor:将 tmdbinfo 统一用 mediainfo 来调用",
-      "v0.0.2": "fix: 修正动漫未设置自定义路径时跳过处理的问题",
-      "v0.0.1": "feat: 增加自定义保存路径，全季度订阅，上映年份过滤"
+    "DoubanRankPlus": {
+        "name": "豆瓣榜单订阅Plus",
+        "description": "自动订阅豆瓣热门榜单增强版",
+        "labels": "订阅",
+        "version": "0.0.15",
+        "icon": "https://raw.githubusercontent.com/boeto/MoviePilot-Plugins/main/icons/DouBanRankPlus.png",
+        "author": "boeto",
+        "level": 2,
+        "v2": True,
+        "history": {
+            "v0.0.15": "fix: 处理历史记录为None",
+            "v0.0.14": "perf: 更新icon",
+            "v0.0.13": "perf: 更新icon",
+            "v0.0.12": "perf: 优先使用原标题匹配TMDB信息",
+            "v0.0.11": "fix: unique_flag处理记录",
+            "v0.0.10": "perf: 优化rssinfo识别和历史记录处理判定",
+            "v0.0.9": "fix: 从rss地址中获取类型",
+            "v0.0.8": "feat: 增加豆瓣IP限制后结束任务选项",
+            "v0.0.7": "fix: 添加变量初始值",
+            "v0.0.6": "feat: 增加豆瓣IP限制后切换识别源，历史面板分类显示，历史数据统计",
+            "v0.0.5": "feat: 增加随机休眠时间，增加历史处理状态记录，增加清空失败历史功能",
+            "v0.0.4": "fix: 修正影视类型匹配",
+            "v0.0.3": "refactor:将 tmdbinfo 统一用 mediainfo 来调用",
+            "v0.0.2": "fix: 修正动漫未设置自定义路径时跳过处理的问题",
+            "v0.0.1": "feat: 增加自定义保存路径，全季度订阅，上映年份过滤"
+        }
     }
-  }
 }
