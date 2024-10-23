@@ -71,6 +71,19 @@
       "v0.1": "初始化版本猫眼订阅功能"
     }
   },
+  "MediaServerMsg": {
+        "name": "媒体库服务器通知",
+        "description": "发送Emby/Jellyfin/Plex服务器的播放、入库等通知消息。",
+        "labels": "消息通知,媒体库",
+        "version": "1.4",
+        "icon": "mediaplay.png",
+        "author": "jxxghp",
+        "level": 1,
+        "v2": true,
+        "history": {
+            "v1.4": "MoviePilot V2 版本媒体库服务器通知插件"
+        }
+    },
   "DoubanRankPlus": {
     "name": "豆瓣榜单订阅Plus",
     "description": "自动订阅豆瓣热门榜单增强版",
