@@ -12,7 +12,7 @@ from app.utils.web import WebUtils
 
 class MediaServerMsg(_PluginBase):
     # 插件名称
-    plugin_name = "媒体库服务器通知"
+    plugin_name = "emby服务器通知"
     # 插件描述
     plugin_desc = "发送Emby/Jellyfin/Plex服务器的播放、入库等通知消息。"
     # 插件图标
