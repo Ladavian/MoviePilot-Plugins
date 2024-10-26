@@ -84,6 +84,20 @@
             "v1.4": "MoviePilot V2 版本媒体库服务器通知插件"
         }
     },
+    "TorrentRemover": {
+        "name": "下载器自动删种",
+        "description": "自动删除下载器中的下载任务。",
+        "labels": "做种",
+        "version": "2.1",
+        "icon": "delete.jpg",
+        "author": "jxxghp",
+        "level": 2,
+        "v2": true,
+        "history": {
+            "v2.1": "修复兼容MoviePilot V2 版本",
+            "v2.0": "兼容MoviePilot V2 版本"
+        }
+    },
     "DoubanRankPlus": {
         "name": "豆瓣榜单订阅Plus",
         "description": "自动订阅豆瓣热门榜单增强版",
