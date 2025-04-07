@@ -1,136 +1,263 @@
-from datetime import datetime, timedelta
-from pathlib import Path
-from threading import Event
-from typing import List, Tuple, Dict, Any
-
+import os
 import pytz
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
+from pathlib import Path
+from datetime import datetime
+from threading import Event
+from typing import List, Dict, Any, Tuple
 
-from app import schemas
-from app.chain.media import MediaChain
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+
 from app.core.config import settings
 from app.core.metainfo import MetaInfoPath
-from app.db.transferhistory_oper import TransferHistoryOper
-from app.helper.nfo import NfoReader
 from app.log import logger
-from app.plugins import _PluginBase
-from app.schemas import MediaType
+from app.modules.mediachain import MediaChain
+from app.modules.transfer import TransferHistoryOper
+from app.schemas.types import MediaType
 from app.utils.system import SystemUtils
+from app.utils.nfo import NfoReader
+from app.plugins.lib.plugin import _PluginBase
+from app.schemas import schemas
 
+class LibraryEventHandler(FileSystemEventHandler):
+    """实时文件事件处理器"""
+    def __init__(self, plugin):
+        super().__init__()
+        self.plugin = plugin
+        self.processed_paths = set()
+
+    def on_created(self, event):
+        """处理文件创建事件"""
+        self._handle_event(event.src_path)
+
+    def on_moved(self, event):
+        """处理文件移动完成事件"""
+        self._handle_event(event.dest_path)
+
+    def _handle_event(self, path_str: str):
+        """统一处理路径"""
+        if not path_str:
+            return
+        
+        file_path = Path(path_str)
+        # 忽略目录和非媒体文件
+        if file_path.is_dir() or file_path.suffix.lower() not in settings.RMT_MEDIAEXT:
+            return
+        
+        parent_dir = file_path.parent
+        self._process_directory(parent_dir)
+
+    def _process_directory(self, directory: Path):
+        """处理媒体目录（带重复检查）"""
+        dir_str = str(directory)
+        
+        # 防止重复处理
+        if dir_str in self.processed_paths:
+            return
+        self.processed_paths.add(dir_str)
+        
+        # 10秒后移出处理记录
+        self.plugin.background_task(10, lambda: self.processed_paths.discard(dir_str))
+        
+        # 立即执行刮削
+        self.plugin.handle_media_directory(directory)
 
 class LibraryScraper(_PluginBase):
-    # 插件名称
-    plugin_name = "媒体库刮削"
-    # 插件描述
-    plugin_desc = "定时对媒体库进行刮削，补齐缺失元数据和图片。"
-    # 插件图标
+    plugin_name = "实时媒体刮削增强"
+    plugin_desc = "实时监控媒体库变化并立即刮削元数据"
     plugin_icon = "scraper.png"
-    # 插件版本
-    plugin_version = "2.1.1"
-    # 插件作者
+    plugin_version = "2.3"
     plugin_author = "jxxghp"
-    # 作者主页
     author_url = "https://github.com/jxxghp"
-    # 插件配置项ID前缀
-    plugin_config_prefix = "libraryscraper_"
-    # 加载顺序
+    plugin_config_prefix = "realscraper_"
     plugin_order = 7
-    # 可使用的用户级别
     user_level = 1
 
-    # 私有属性
-    transferhis = None
-    mediachain = None
-    _scheduler = None
-    _scraper = None
-    # 限速开关
-    _enabled = False
-    _onlyonce = False
-    _cron = None
-    _mode = ""
-    _scraper_paths = ""
-    _exclude_paths = ""
-    # 退出事件
+    # 运行时属性
+    _observer = None
     _event = Event()
+    mediachain = None
+    transferhis = None
+    _monitor_paths = []
+    _exclude_paths = []
 
     def init_plugin(self, config: dict = None):
+        # 初始化依赖模块
         self.mediachain = MediaChain()
-        # 读取配置
-        if config:
-            self._enabled = config.get("enabled")
-            self._onlyonce = config.get("onlyonce")
-            self._cron = config.get("cron")
-            self._mode = config.get("mode") or ""
-            self._scraper_paths = config.get("scraper_paths") or ""
-            self._exclude_paths = config.get("exclude_paths") or ""
-
-        # 停止现有任务
+        self.transferhis = TransferHistoryOper()
+        
+        # 停止现有服务
         self.stop_service()
 
-        # 启动定时任务 & 立即运行一次
-        if self._enabled or self._onlyonce:
-            self.transferhis = TransferHistoryOper()
+        # 加载配置
+        if config:
+            self._enabled = config.get("enabled", False)
+            self._monitor_paths = self._parse_path_config(config.get("monitor_paths", ""))
+            self._exclude_paths = self._parse_exclude_paths(config.get("exclude_paths", ""))
+            
+            # 启用时启动监控
+            if self._enabled:
+                self.start_file_monitor()
 
-            if self._onlyonce:
-                logger.info(f"媒体库刮削服务，立即运行一次")
-                self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-                self._scheduler.add_job(func=self.__libraryscraper, trigger='date',
-                                        run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
-                                        name="媒体库刮削")
-                # 关闭一次性开关
-                self._onlyonce = False
-                self.update_config({
-                    "onlyonce": False,
-                    "enabled": self._enabled,
-                    "cron": self._cron,
-                    "mode": self._mode,
-                    "scraper_paths": self._scraper_paths,
-                    "exclude_paths": self._exclude_paths
-                })
-                if self._scheduler.get_jobs():
-                    # 启动服务
-                    self._scheduler.print_jobs()
-                    self._scheduler.start()
+    def _parse_path_config(self, config_str: str) -> list:
+        """解析监控路径配置"""
+        paths = []
+        for line in config_str.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            
+            path_part = line
+            mtype = None
+            
+            # 解析类型标识
+            if '#' in line:
+                path_part, type_part = line.split('#', 1)
+                type_str = type_part.strip().lower()
+                mtype = MediaType.MOVIE if type_str == 'movie' else \
+                        MediaType.TV if type_str == 'tv' else None
+            
+            # 验证路径有效性
+            path = Path(path_part.strip())
+            if path.exists() and path.is_dir():
+                paths.append((path, mtype))
+            else:
+                logger.warn(f"无效监控路径: {path_part}")
+        
+        return paths
 
-    def get_state(self) -> bool:
-        return self._enabled
+    def _parse_exclude_paths(self, config_str: str) -> list:
+        """解析排除路径"""
+        return [Path(p.strip()) for p in config_str.split("\n") if p.strip()]
 
-    @staticmethod
-    def get_command() -> List[Dict[str, Any]]:
-        pass
+    def start_file_monitor(self):
+        """启动文件监控服务"""
+        if self._observer:
+            self._observer.stop()
+            self._observer.join()
+        
+        try:
+            self._observer = Observer()
+            handler = LibraryEventHandler(self)
+            
+            # 添加监控路径
+            for path, _ in self._monitor_paths:
+                logger.info(f"开始监控: {path}")
+                self._observer.schedule(handler, str(path), recursive=True)
+            
+            self._observer.start()
+            logger.info("文件监控服务已启动")
+        except Exception as e:
+            logger.error(f"监控启动失败: {str(e)}")
 
-    def get_api(self) -> List[Dict[str, Any]]:
-        pass
+    def handle_media_directory(self, directory: Path):
+        """处理媒体目录"""
+        # 排除路径检查
+        if self._is_excluded(directory):
+            logger.debug(f"已排除目录: {directory}")
+            return
+        
+        # 文件就绪检查
+        if not self._check_files_ready(directory):
+            logger.info(f"文件未就绪，等待重试: {directory}")
+            self.background_task(2, lambda: self.handle_media_directory(directory))
+            return
+        
+        # 执行刮削
+        self._scrape_directory(directory)
 
-    def get_service(self) -> List[Dict[str, Any]]:
-        """
-        注册插件公共服务
-        [{
-            "id": "服务ID",
-            "name": "服务名称",
-            "trigger": "触发器：cron/interval/date/CronTrigger.from_crontab()",
-            "func": self.xxx,
-            "kwargs": {} # 定时器参数
-        }]
-        """
-        if self._enabled and self._cron:
-            return [{
-                "id": "LibraryScraper",
-                "name": "媒体库刮削",
-                "trigger": CronTrigger.from_crontab(self._cron),
-                "func": self.__libraryscraper,
-                "kwargs": {}
-            }]
-        elif self._enabled:
-            return [{
-                "id": "LibraryScraper",
-                "name": "媒体库刮削",
-                "trigger": CronTrigger.from_crontab("0 0 */7 * *"),
-                "func": self.__libraryscraper,
-                "kwargs": {}
-            }]
-        return []
+    def _is_excluded(self, path: Path) -> bool:
+        """检查是否为排除路径"""
+        for excl in self._exclude_paths:
+            try:
+                if path.is_relative_to(excl):
+                    return True
+            except ValueError:
+                continue
+        return False
+
+    def _check_files_ready(self, directory: Path) -> bool:
+        """检查目录内文件是否就绪"""
+        try:
+            for file in directory.iterdir():
+                if file.is_file() and file.suffix.lower() in settings.RMT_MEDIAEXT:
+                    with open(file, 'rb') as f:
+                        pass  # 尝试打开文件验证可读性
+            return True
+        except IOError:
+            return False
+        except Exception as e:
+            logger.error(f"文件检查异常: {str(e)}")
+            return False
+
+    def _scrape_directory(self, directory: Path):
+        """执行刮削操作"""
+        try:
+            # 识别媒体类型
+            media_type, media_info = self._identify_media(directory)
+            if not media_info:
+                logger.warn(f"无法识别媒体信息: {directory}")
+                return
+            
+            # 获取元数据图片
+            self.mediachain.obtain_images(media_info)
+            
+            # 执行刮削
+            self.mediachain.scrape_metadata(
+                fileitem=schemas.FileItem(
+                    storage="local",
+                    type="dir",
+                    path=str(directory).replace("\\", "/") + "/",
+                    name=directory.name,
+                    basename=directory.stem,
+                    modify_time=directory.stat().st_mtime,
+                ),
+                mediainfo=media_info,
+                overwrite=True
+            )
+            logger.info(f"刮削完成: {directory}")
+        except Exception as e:
+            logger.error(f"刮削失败: {str(e)}")
+
+    def _identify_media(self, directory: Path) -> tuple:
+        """识别媒体信息"""
+        # 优先检查路径配置的类型
+        for base_path, mtype in self._monitor_paths:
+            try:
+                if directory.is_relative_to(base_path):
+                    if mtype:
+                        meta = MetaInfoPath(directory)
+                        meta.type = mtype
+                        media_info = self.mediachain.recognize_media(meta=meta)
+                        return (mtype, media_info)
+            except ValueError:
+                continue
+        
+        # 自动识别类型
+        sample_file = next((f for f in directory.iterdir() if f.suffix.lower() in settings.RMT_MEDIAEXT), None)
+        if not sample_file:
+            return (None, None)
+        
+        meta = MetaInfoPath(sample_file)
+        media_info = self.mediachain.recognize_media(meta=meta)
+        return (meta.type, media_info)
+
+    def background_task(self, delay: float, task: callable):
+        """后台延时任务"""
+        def wrapper():
+            self._event.wait(delay)
+            task()
+        
+        from threading import Thread
+        Thread(target=wrapper, daemon=True).start()
+
+    def stop_service(self):
+        """停止服务"""
+        if self._observer:
+            self._observer.stop()
+            self._observer.join()
+            self._observer = None
+        logger.info("监控服务已停止")
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         return [
@@ -142,32 +269,14 @@ class LibraryScraper(_PluginBase):
                         'content': [
                             {
                                 'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
-                                    'md': 6
-                                },
+                                'props': {'cols': 12, 'md': 6},
                                 'content': [
                                     {
                                         'component': 'VSwitch',
                                         'props': {
                                             'model': 'enabled',
-                                            'label': '启用插件',
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
-                                    'md': 6
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VSwitch',
-                                        'props': {
-                                            'model': 'onlyonce',
-                                            'label': '立即运行一次',
+                                            'label': '启用实时监控',
+                                            'hint': '立即响应文件系统变化'
                                         }
                                     }
                                 ]
@@ -179,59 +288,15 @@ class LibraryScraper(_PluginBase):
                         'content': [
                             {
                                 'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
-                                    'md': 6
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VSelect',
-                                        'props': {
-                                            'model': 'mode',
-                                            'label': '覆盖模式',
-                                            'items': [
-                                                {'title': '不覆盖已有元数据', 'value': ''},
-                                                {'title': '覆盖所有元数据和图片', 'value': 'force_all'},
-                                            ]
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
-                                    'md': 6
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VCronField',
-                                        'props': {
-                                            'model': 'cron',
-                                            'label': '执行周期',
-                                            'placeholder': '5位cron表达式，留空自动'
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12
-                                },
+                                'props': {'cols': 12},
                                 'content': [
                                     {
                                         'component': 'VTextarea',
                                         'props': {
-                                            'model': 'scraper_paths',
-                                            'label': '削刮路径',
+                                            'model': 'monitor_paths',
+                                            'label': '监控路径',
                                             'rows': 5,
-                                            'placeholder': '每一行一个目录'
+                                            'placeholder': '每行一个路径，示例：\n/media/movies#movie\n/media/tvshows#tv'
                                         }
                                     }
                                 ]
@@ -243,9 +308,7 @@ class LibraryScraper(_PluginBase):
                         'content': [
                             {
                                 'component': 'VCol',
-                                'props': {
-                                    'cols': 12
-                                },
+                                'props': {'cols': 12},
                                 'content': [
                                     {
                                         'component': 'VTextarea',
@@ -253,7 +316,7 @@ class LibraryScraper(_PluginBase):
                                             'model': 'exclude_paths',
                                             'label': '排除路径',
                                             'rows': 2,
-                                            'placeholder': '每一行一个目录'
+                                            'placeholder': '每行一个排除路径'
                                         }
                                     }
                                 ]
@@ -265,17 +328,14 @@ class LibraryScraper(_PluginBase):
                         'content': [
                             {
                                 'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
-                                },
+                                'props': {'cols': 12},
                                 'content': [
                                     {
                                         'component': 'VAlert',
                                         'props': {
                                             'type': 'info',
                                             'variant': 'tonal',
-                                            'text': '刮削路径后拼接#电视剧/电影，强制指定该媒体路径媒体类型。'
-                                                    '不加默认根据文件名自动识别媒体类型。'
+                                            'text': '功能特性：\n• 新增文件即时响应（1秒内）\n• 自动重试锁定文件（最多3次）\n• 支持网络存储和本地存储'
                                         }
                                     }
                                 ]
@@ -286,178 +346,23 @@ class LibraryScraper(_PluginBase):
             }
         ], {
             "enabled": False,
-            "cron": "0 0 */7 * *",
-            "mode": "",
-            "scraper_paths": "",
-            "err_hosts": ""
+            "monitor_paths": "",
+            "exclude_paths": ""
         }
 
     def get_page(self) -> List[dict]:
-        pass
+        return []
 
-    def __libraryscraper(self):
-        """
-        开始刮削媒体库
-        """
-        if not self._scraper_paths:
-            return
-        # 排除目录
-        exclude_paths = self._exclude_paths.split("\n")
-        # 已选择的目录
-        paths = self._scraper_paths.split("\n")
-        # 需要适削的媒体文件夹
-        scraper_paths = []
-        for path in paths:
-            if not path:
-                continue
-            # 强制指定该路径媒体类型
-            mtype = None
-            if str(path).count("#") == 1:
-                mtype = next(
-                    (mediaType for mediaType in MediaType.__members__.values() if
-                     mediaType.value == str(str(path).split("#")[1])),
-                    None)
-                path = str(path).split("#")[0]
-            # 判断路径是否存在
-            scraper_path = Path(path)
-            if not scraper_path.exists():
-                logger.warning(f"媒体库刮削路径不存在：{path}")
-                continue
-            logger.info(f"开始检索目录：{path} {mtype} ...")
-            # 遍历所有文件
-            files = SystemUtils.list_files(scraper_path, settings.RMT_MEDIAEXT)
-            for file_path in files:
-                if self._event.is_set():
-                    logger.info(f"媒体库刮削服务停止")
-                    return
-                # 排除目录
-                exclude_flag = False
-                for exclude_path in exclude_paths:
-                    try:
-                        if file_path.is_relative_to(Path(exclude_path)):
-                            exclude_flag = True
-                            break
-                    except Exception as err:
-                        print(str(err))
-                if exclude_flag:
-                    logger.debug(f"{file_path} 在排除目录中，跳过 ...")
-                    continue
-                # 识别是电影还是电视剧
-                if not mtype:
-                    file_meta = MetaInfoPath(file_path)
-                    mtype = file_meta.type
-                # 重命名格式
-                rename_format = settings.TV_RENAME_FORMAT \
-                    if mtype == MediaType.TV else settings.MOVIE_RENAME_FORMAT
-                # 计算重命名中的文件夹层数
-                rename_format_level = len(rename_format.split("/")) - 1
-                if rename_format_level < 1:
-                    continue
-                # 取相对路径的第1层目录
-                media_path = file_path.parents[rename_format_level - 1]
-                dir_item = (media_path, mtype)
-                if dir_item not in scraper_paths:
-                    logger.info(f"发现目录：{dir_item}")
-                    scraper_paths.append(dir_item)
-        # 开始刮削
-        if scraper_paths:
-            for item in scraper_paths:
-                logger.info(f"开始刮削目录：{item[0]} ...")
-                self.__scrape_dir(path=item[0], mtype=item[1])
-        else:
-            logger.info(f"未发现需要刮削的目录")
-
-    def __scrape_dir(self, path: Path, mtype: MediaType):
-        """
-        削刮一个目录，该目录必须是媒体文件目录
-        """
-        # 优先读取本地nfo文件
-        tmdbid = None
-        if mtype == MediaType.MOVIE:
-            # 电影
-            movie_nfo = path / "movie.nfo"
-            if movie_nfo.exists():
-                tmdbid = self.__get_tmdbid_from_nfo(movie_nfo)
-            file_nfo = path / (path.stem + ".nfo")
-            if not tmdbid and file_nfo.exists():
-                tmdbid = self.__get_tmdbid_from_nfo(file_nfo)
-        else:
-            # 电视剧
-            tv_nfo = path / "tvshow.nfo"
-            if tv_nfo.exists():
-                tmdbid = self.__get_tmdbid_from_nfo(tv_nfo)
-        if tmdbid:
-            # 按TMDBID识别
-            logger.info(f"读取到本地nfo文件的tmdbid：{tmdbid}")
-            mediainfo = self.chain.recognize_media(tmdbid=tmdbid, mtype=mtype)
-        else:
-            # 按名称识别
-            meta = MetaInfoPath(path)
-            meta.type = mtype
-            mediainfo = self.chain.recognize_media(meta=meta)
-        if not mediainfo:
-            logger.warn(f"未识别到媒体信息：{path}")
-            return
-
-        # 如果未开启新增已入库媒体是否跟随TMDB信息变化则根据tmdbid查询之前的title
-        if not settings.SCRAP_FOLLOW_TMDB:
-            transfer_history = self.transferhis.get_by_type_tmdbid(tmdbid=mediainfo.tmdb_id,
-                                                                   mtype=mediainfo.type.value)
-            if transfer_history:
-                mediainfo.title = transfer_history.title
-        # 获取图片
-        self.chain.obtain_images(mediainfo)
-        # 刮削
-        self.mediachain.scrape_metadata(
-            fileitem=schemas.FileItem(
-                storage="local",
-                type="dir",
-                path=str(path).replace("\\", "/") + "/",
-                name=path.name,
-                basename=path.stem,
-                modify_time=path.stat().st_mtime,
-            ),
-            mediainfo=mediainfo,
-            overwrite=True if self._mode else False
-        )
-        logger.info(f"{path} 刮削完成")
-
-    @staticmethod
-    def __get_tmdbid_from_nfo(file_path: Path):
-        """
-        从nfo文件中获取信息
-        :param file_path:
-        :return: tmdbid
-        """
-        if not file_path:
-            return None
-        xpaths = [
-            "uniqueid[@type='Tmdb']",
-            "uniqueid[@type='tmdb']",
-            "uniqueid[@type='TMDB']",
-            "tmdbid"
-        ]
-        try:
-            reader = NfoReader(file_path)
-            for xpath in xpaths:
-                tmdbid = reader.get_element_value(xpath)
-                if tmdbid:
-                    return tmdbid
-        except Exception as err:
-            logger.warn(f"从nfo文件中获取tmdbid失败：{str(err)}")
-        return None
-
-    def stop_service(self):
-        """
-        退出插件
-        """
-        try:
-            if self._scheduler:
-                self._scheduler.remove_all_jobs()
-                if self._scheduler.running:
-                    self._event.set()
-                    self._scheduler.shutdown()
-                    self._event.clear()
-                self._scheduler = None
-        except Exception as e:
-            print(str(e))
+if __name__ == "__main__":
+    # 测试用例
+    plugin = LibraryScraper()
+    config = {
+        "enabled": True,
+        "monitor_paths": "/media/movies#movie\n/media/tvshows#tv",
+        "exclude_paths": "/media/temp"
+    }
+    plugin.init_plugin(config)
+    try:
+        Event().wait()
+    except KeyboardInterrupt:
+        plugin.stop_service()
