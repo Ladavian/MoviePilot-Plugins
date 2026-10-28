@@ -28,7 +28,7 @@ class StrmFlowBridge(_PluginBase):
     plugin_name = 'StrmFlow 联动'
     plugin_desc = '硬链接完成上传通知、订阅镜像与电影/逐集双向去重（MoviePilot V3）'
     plugin_icon = 'https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png'
-    plugin_version = '1.0.3'
+    plugin_version = '1.0.4'
     plugin_author = 'Ladavian'
     author_url = 'https://github.com/Ladavian'
     plugin_config_prefix = 'strmflowbridge_'
@@ -55,8 +55,22 @@ class StrmFlowBridge(_PluginBase):
         self._available = {}
         self._last_ok = 0
         self._last_error = ''
+        self._last_exchange = ''
+        self._subscription_count = 0
+        self._refresh_scheduled = False
         if self._enabled and any(self._features.values()):
-            scheduler_sdk.add_plugin_once_job(self.__class__.__name__, 'refresh', self.refresh, 'StrmFlow 联动初始化', delay_seconds=3)
+            self._schedule_refresh('StrmFlow 联动初始化',3)
+
+    def _schedule_refresh(self, name, delay=1):
+        # MP replaces pending jobs with the same ID. Keep the first trigger so
+        # a busy RSS subscription stream cannot postpone uploads indefinitely.
+        with self._lock:
+            if self._refresh_scheduled:
+                return
+            self._refresh_scheduled=True
+        if not scheduler_sdk.add_plugin_once_job(self.__class__.__name__,'refresh',self.refresh,name,delay_seconds=delay):
+            self._refresh_scheduled=False
+            self._last_error='MP 调度器未接受联动任务，等待下一次定时对账'
 
     def _feature(self,key):
         """The master switch gates every independent, opt-in feature."""
@@ -92,6 +106,7 @@ class StrmFlowBridge(_PluginBase):
             if not key or field(sub, 'episode_group') or field(sub, 'best_version'):
                 continue
             result.append({'id':str(sub.id),'tmdb_id':key[0],'media_type':key[1],'title':sub.name or '', 'year':str(field(sub,'year') or ''),'season':int(field(sub,'season') or 0),'start':int(field(sub,'start_episode') or 0),'end':int(field(sub,'total_episode') or 0),'paused':field(sub,'state')=='P'})
+        self._subscription_count = len(result)
         return result
 
     def _request(self, payload, timeout=10):
@@ -114,12 +129,22 @@ class StrmFlowBridge(_PluginBase):
             raise ValueError('联动协议不匹配')
         return result
 
+    @staticmethod
+    def _error_message(error):
+        if isinstance(error, urllib.error.HTTPError):
+            why={401:'专用联动密钥不匹配',403:'联动未启用或被访问控制拒绝',404:'地址或主程序版本不匹配',503:'主程序暂不可用'}.get(error.code,'主程序拒绝请求')
+            return f'联动失败：HTTP {error.code}，{why}；通知保留重试'
+        if isinstance(error, ValueError):
+            return '联动失败：配置或响应格式无效，请检查地址、专用密钥和主程序版本'
+        return f'联动失败：{type(error).__name__}，请检查 MP 到 StrmFlow 的网络；通知保留重试'
+
     def refresh(self):
         """Send only enabled features; never consume disabled features' queued data."""
         if not self._enabled or not any(self._features.values()) or not self._exchange_lock.acquire(blocking=False):
             return
         try:
             with self._lock:
+                self._refresh_scheduled=False
                 pending=deepcopy(self._state['outbox'])
             def eligible(event):
                 return (self._feature('notify_upload') and event.get('paths')) or (self._feature('mp_to_strmflow') and event.get('completed')) or (self._feature('sync_subscriptions') and event.get('removed'))
@@ -137,6 +162,7 @@ class StrmFlowBridge(_PluginBase):
                 payload['completed']=[event['completed'] for event in selected.values() if event.get('completed')]
             if self._feature('notify_upload'):
                 payload['paths']=sorted({path for event in selected.values() for path in event.get('paths',[])})[:1000]
+                payload['upload_ready']=bool(payload['paths'])
             result=self._request(payload)
             with self._lock:
                 if self._feature('strmflow_to_mp'):
@@ -160,8 +186,9 @@ class StrmFlowBridge(_PluginBase):
             if reason and reason!=self._last_error:
                 logger.warning(reason)
             self._last_error=reason
+            self._last_exchange=time.strftime('%Y-%m-%d %H:%M:%S')
         except Exception as error:
-            reason=f'联动暂未完成（{type(error).__name__}），通知已保留等待重试'
+            reason=self._error_message(error)
             if reason!=self._last_error:
                 logger.warning(reason)
                 self._last_error=reason
@@ -203,14 +230,14 @@ class StrmFlowBridge(_PluginBase):
             elif self._feature('notify_upload'):
                 self._state['outbox'][event_id]={'paths':paths}
             self.save_data('bridge_state',self._state)
-        scheduler_sdk.add_plugin_once_job(self.__class__.__name__,'refresh',self.refresh,'StrmFlow 硬链接完成通知',delay_seconds=1)
+        self._schedule_refresh('StrmFlow 硬链接完成通知')
 
     @eventmanager.register(EventType.SubscribeAdded)
     @eventmanager.register(EventType.SubscribeModified)
     def subscription_changed(self, event: Event):
         """Coalesce subscription edits without performing network work on the event thread."""
         if self._feature('sync_subscriptions'):
-            scheduler_sdk.add_plugin_once_job(self.__class__.__name__,'refresh',self.refresh,'StrmFlow 订阅同步',delay_seconds=1)
+            self._schedule_refresh('StrmFlow 订阅同步')
 
     def _refresh_available(self):
         """Read inventory without creating subscriptions when only deduplication is enabled."""
@@ -236,7 +263,7 @@ class StrmFlowBridge(_PluginBase):
         with self._lock:
             self._state['outbox'][f'removed:{remote_id}']={'removed':str(remote_id)}
             self.save_data('bridge_state',self._state)
-        scheduler_sdk.add_plugin_once_job(self.__class__.__name__,'refresh',self.refresh,'StrmFlow 取消订阅同步',delay_seconds=1)
+        self._schedule_refresh('StrmFlow 取消订阅同步')
 
     @eventmanager.register(ChainEventType.ResourceSelection)
     def filter_resources(self, event: Event):
@@ -302,7 +329,7 @@ class StrmFlowBridge(_PluginBase):
                     sub=SubscribeOper().update(sub.id,{'note':note}) or sub
                 complete=end>=start and set(range(start,end+1))<=acquired
             if complete:
-                media=MediaInfo(title=sub.name,year=field(sub,'year'),type=MediaType.MOVIE if key[1]=='movie' else MediaType.TV,media_source='tmdb',media_id=str(key[0]),tmdb_id=key[0])
+                media=MediaInfo(title=sub.name,year=field(sub,'year'),type=MediaType.MOVIE if key[1]=='movie' else MediaType.TV,media_source='themoviedb',media_id=str(key[0]))
                 meta=MetaInfo(sub.name);meta.type=MediaType.MOVIE if key[1]=='movie' else MediaType.TV
                 # The public Chain writes completion history and dispatches normal completion effects.
                 SubscribeChain().finish_subscribe_or_not(subscribe=sub,meta=meta,mediainfo=media,force=True)
@@ -334,4 +361,4 @@ class StrmFlowBridge(_PluginBase):
         labels={'notify_upload':'上传通知','sync_subscriptions':'订阅同步','mp_to_strmflow':'MP → StrmFlow','strmflow_to_mp':'StrmFlow → MP','complete_subscriptions':'订阅自动完成'}
         active='、'.join(label for key,label in labels.items() if self._feature(key))
         text=('已启用：'+active if active else '当前未启用联动功能')+f"。待发通知 {len(self._state.get('outbox',{}))} 条。"
-        return [{'component':'VAlert','props':{'type':'info','variant':'tonal','text':text}}]
+        return [{'component':'VAlert','props':{'type':'info','variant':'tonal','text':text}}, {'component':'VAlert','props':{'type':'warning' if self._last_error else 'info','variant':'tonal','text':self._last_error or (f'最近通信成功：{self._last_exchange}；可同步订阅 {self._subscription_count} 条' if self._last_exchange else '尚无成功通信记录。订阅对账每 15 秒执行，上传通知在收到成功入库事件后执行。')}}]

@@ -29,7 +29,7 @@ def identity(media):
     kind = value(field(media, 'type'))
     kind = {'电影':'movie','电视剧':'tv','MOVIE':'movie','TV':'tv'}.get(kind, kind)
     source = value(field(media, 'media_source'))
-    raw = field(media, 'media_id') if source == 'tmdb' else field(media, 'tmdb_id')
+    raw = field(media, 'media_id') if source in ('tmdb', 'themoviedb') else (field(media, 'tmdb_id') or field(media, 'tmdbid'))
     try:
         tmdb_id = int(raw or 0)
     except (TypeError, ValueError):

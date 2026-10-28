@@ -119,7 +119,7 @@ class ControlsTests(unittest.TestCase):
         plugin=self.configured(notify_upload=True);captured=[]
         plugin._request=lambda body,**kw:(captured.append(body) or {'available':[],'accepted':True,'protocol':1})
         plugin._state['outbox']['one']={'paths':['/media/Movie.mkv'],'completed':{'tmdb_id':42,'media_type':'movie'}}
-        plugin.refresh();self.assertEqual(set(captured[0]),{'paths'});self.assertIn('completed',plugin._state['outbox']['one']);self.assertNotIn('paths',plugin._state['outbox']['one'])
+        plugin.refresh();self.assertEqual(set(captured[0]),{'paths','upload_ready'});self.assertIn('completed',plugin._state['outbox']['one']);self.assertNotIn('paths',plugin._state['outbox']['one'])
     def test_dedup_only_does_not_mirror_or_modify_subscriptions(self):
         plugin=self.configured(strmflow_to_mp=True);Oper.rows=[types.SimpleNamespace(id=1,media_source='tmdb',media_id='42',type='电影',episode_group=None,best_version=False,name='Movie',state='R')];captured=[]
         plugin._request=lambda body,**kw:(captured.append(body) or {'available':[{'tmdb_id':42,'media_type':'movie','movie':True,'episodes':{}}],'accepted':True,'protocol':1})
@@ -128,3 +128,34 @@ class ControlsTests(unittest.TestCase):
         plugin=self.configured(sync_subscriptions=True)
         plugin.transfer_complete(types.SimpleNamespace(event_data={'mediainfo':{'media_source':'tmdb','media_id':'42','type':'电影'},'transferinfo':{'success':True,'file_list_new':['/media/Movie.mkv']}}))
         self.assertEqual(plugin._state['outbox'],{})
+
+class V3CommunicationTests(ControlsTests):
+    def test_real_v3_subscription_fields_reach_exchange(self):
+        plugin=self.configured(sync_subscriptions=True)
+        Oper.rows=[types.SimpleNamespace(id=8,media_source='themoviedb',media_id='297253',type='电视剧',episode_group=None,best_version=False,name='Series',state='R',season=1,total_episode=40)]
+        captured=[]
+        plugin._request=lambda body,**kw:(captured.append(body) or {'available':[],'accepted':True,'protocol':1})
+        plugin.refresh()
+        self.assertEqual(captured[0]['subscriptions'][0]['tmdb_id'],297253)
+        self.assertEqual(plugin._subscription_count,1)
+        self.assertTrue(plugin._last_exchange)
+        self.assertIn('最近通信成功',str(plugin.get_page()))
+    def test_error_panel_explains_rejected_token_without_leaking(self):
+        import urllib.error
+        plugin=self.configured(sync_subscriptions=True)
+        def fail(*a,**kw):raise urllib.error.HTTPError('http://private/token-secret',401,'secret',{},None)
+        plugin._request=fail;plugin.refresh()
+        self.assertIn('401',str(plugin.get_page()))
+        self.assertNotIn('token-secret',str(plugin.get_page()))
+
+class BusyEventTests(unittest.TestCase):
+    def test_busy_events_do_not_keep_replacing_pending_job(self):
+        cls=load_plugin();plugin=cls();plugin.init_plugin({'enabled':False,**{key:True for key in cls.FEATURES}})
+        calls=[];runtime=sys.modules[cls.__module__];original=runtime.scheduler_sdk.add_plugin_once_job
+        runtime.scheduler_sdk.add_plugin_once_job=lambda *a,**kw:(calls.append(kw) or True)
+        try:
+            plugin._enabled=True
+            for _ in range(100):plugin.subscription_changed(types.SimpleNamespace(event_data={}))
+            self.assertEqual(len(calls),1)
+            self.assertEqual(calls[0]['delay_seconds'],1)
+        finally:runtime.scheduler_sdk.add_plugin_once_job=original

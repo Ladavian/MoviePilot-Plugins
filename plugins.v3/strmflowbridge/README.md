@@ -45,3 +45,10 @@
 - 没有文件名/元数据中明确集号、也没有已知季集清单的整季包，不做猜测性逐集限制。
 - 当前已经通过纯协议、模拟 V3 宿主生命周期与完成语义，以及 Go 端认证、幂等、季集范围测试。尚未在真实 MP V3 宿主安装加载或真实 PT/115 账号上联调，不能将这些测试等同于线上验证。
 - 官方参考：[V3 开发指南](https://github.com/jxxghp/MoviePilot-Plugins/blob/main/docs/Plugin_Development.md)、[V3 事件合同](https://github.com/jxxghp/MoviePilot/blob/v3/app/schemas/event.py)。
+
+### v1.0.4 修复
+
+- 识别 MoviePilot V3 官方 `themoviedb` 身份及旧版 tmdbid 字段。
+- 高频订阅变更保留第一次通知的执行时间，不反复替换待执行任务。
+- 面板展示最近成功通信、可同步订阅数及脱敏错误原因。
+- 配合 StrmFlow v0.2.1，上传通知仅唤醒主程序已绑定的任务。未设置外部目录映射时无需让两个容器的挂载名称相同；设置了映射时继续严格校验边界。旧主程序不识别新信号时仍发送路径并保留失败通知，升级主程序后再重试。

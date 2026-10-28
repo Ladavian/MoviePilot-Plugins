@@ -37,3 +37,9 @@ class CustomGroupTests(unittest.TestCase):
         self.assertIs(bridge.remaining_context(context,{(42,'tv'):{'episodes':{'1':[1]}}}),context)
 
 if __name__=='__main__':unittest.main()
+
+class V3IdentityTests(unittest.TestCase):
+    def test_official_the_movie_db_identity_and_legacy_alias(self):
+        self.assertEqual(bridge.identity({'media_source':'themoviedb','media_id':'297253','type':'电视剧'}),(297253,'tv'))
+        self.assertEqual(bridge.identity({'tmdbid':42,'type':'电影'}),(42,'movie'))
+        self.assertIsNone(bridge.identity({'media_source':'douban','media_id':'42','type':'电影'}))
