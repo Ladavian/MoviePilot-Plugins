@@ -2,11 +2,12 @@
   "StrmFlowBridge": {
     "name": "StrmFlow 联动",
     "description": "MoviePilot V3：硬链接完成上传、订阅同步与电影/逐集双向去重",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "icon": "https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png",
     "author": "Ladavian",
     "level": 1,
     "history": {
+      "v1.0.5": "补充订阅海报同步；成功入库事件缺少路径时可靠触发绑定任务扫描，并显示事件与上传确认状态",
       "v1.0.4": "修复 V3 themoviedb 媒体身份识别、高频订阅事件推迟通知，新增最近通信与脱敏失败原因",
       "v1.0.3": "配置页按功能分组，增加总开关及独立功能开关，默认关闭；升级旧配置时暂停联动并保留待发通知",
       "v1.0.2": "迁入通用 MoviePilot-Plugins 插件库，更新安装来源、图标和说明",

@@ -28,7 +28,7 @@ class StrmFlowBridge(_PluginBase):
     plugin_name = 'StrmFlow 联动'
     plugin_desc = '硬链接完成上传通知、订阅镜像与电影/逐集双向去重（MoviePilot V3）'
     plugin_icon = 'https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png'
-    plugin_version = '1.0.4'
+    plugin_version = '1.0.5'
     plugin_author = 'Ladavian'
     author_url = 'https://github.com/Ladavian'
     plugin_config_prefix = 'strmflowbridge_'
@@ -57,7 +57,16 @@ class StrmFlowBridge(_PluginBase):
         self._last_error = ''
         self._last_exchange = ''
         self._subscription_count = 0
+        self._last_transfer = '尚未收到成功入库事件'
+        self._last_upload_ack = ''
         self._refresh_scheduled = False
+        if self._config.get('test_upload_once'):
+            self._config['test_upload_once']=False
+            self.update_config(self._config)
+            if self._feature('notify_upload'):
+                self._queue_upload_ready()
+            else:
+                self._last_error='测试上传触发需要启用总开关和上传通知'
         if self._enabled and any(self._features.values()):
             self._schedule_refresh('StrmFlow 联动初始化',3)
 
@@ -105,7 +114,7 @@ class StrmFlowBridge(_PluginBase):
             key = identity(sub)
             if not key or field(sub, 'episode_group') or field(sub, 'best_version'):
                 continue
-            result.append({'id':str(sub.id),'tmdb_id':key[0],'media_type':key[1],'title':sub.name or '', 'year':str(field(sub,'year') or ''),'season':int(field(sub,'season') or 0),'start':int(field(sub,'start_episode') or 0),'end':int(field(sub,'total_episode') or 0),'paused':field(sub,'state')=='P'})
+            result.append({'id':str(sub.id),'tmdb_id':key[0],'media_type':key[1],'title':sub.name or '', 'poster_path':str(field(sub,'poster') or field(sub,'poster_path') or ''),'year':str(field(sub,'year') or ''),'season':int(field(sub,'season') or 0),'start':int(field(sub,'start_episode') or 0),'end':int(field(sub,'total_episode') or 0),'paused':field(sub,'state')=='P'})
         self._subscription_count = len(result)
         return result
 
@@ -147,7 +156,7 @@ class StrmFlowBridge(_PluginBase):
                 self._refresh_scheduled=False
                 pending=deepcopy(self._state['outbox'])
             def eligible(event):
-                return (self._feature('notify_upload') and event.get('paths')) or (self._feature('mp_to_strmflow') and event.get('completed')) or (self._feature('sync_subscriptions') and event.get('removed'))
+                return (self._feature('notify_upload') and (event.get('paths') or event.get('upload_ready'))) or (self._feature('mp_to_strmflow') and event.get('completed')) or (self._feature('sync_subscriptions') and event.get('removed'))
             selected=dict(list((key,event) for key,event in pending.items() if eligible(event))[:100])
             if not selected and not self._feature('sync_subscriptions') and not self._feature('strmflow_to_mp'):
                 return
@@ -162,7 +171,7 @@ class StrmFlowBridge(_PluginBase):
                 payload['completed']=[event['completed'] for event in selected.values() if event.get('completed')]
             if self._feature('notify_upload'):
                 payload['paths']=sorted({path for event in selected.values() for path in event.get('paths',[])})[:1000]
-                payload['upload_ready']=bool(payload['paths'])
+                payload['upload_ready']=bool(payload['paths']) or any(event.get('upload_ready') for event in selected.values())
             result=self._request(payload)
             with self._lock:
                 if self._feature('strmflow_to_mp'):
@@ -170,10 +179,10 @@ class StrmFlowBridge(_PluginBase):
                     self._last_ok=time.monotonic()
                 for key,event in selected.items():
                     current=self._state['outbox'].get(key,{})
-                    for name,flag in (('completed','mp_to_strmflow'),('removed','sync_subscriptions'),('paths','notify_upload')):
+                    for name,flag in (('completed','mp_to_strmflow'),('removed','sync_subscriptions'),('paths','notify_upload'),('upload_ready','notify_upload')):
                         if not self._feature(flag) or name not in event or current.get(name)!=event[name]:
                             continue
-                        if name=='paths' and not result.get('upload_accepted',True):
+                        if name in ('paths','upload_ready') and not result.get('upload_accepted',True):
                             continue
                         if name=='completed' and event[name] not in self._state['confirmed']:
                             self._state['confirmed'].append(event[name])
@@ -187,6 +196,9 @@ class StrmFlowBridge(_PluginBase):
                 logger.warning(reason)
             self._last_error=reason
             self._last_exchange=time.strftime('%Y-%m-%d %H:%M:%S')
+            if payload.get('upload_ready') and result.get('upload_accepted',True):
+                self._last_upload_ack=self._last_exchange
+                logger.info('StrmFlow 已接收上传触发，主程序按绑定目录检查稳定文件')
         except Exception as error:
             reason=self._error_message(error)
             if reason!=self._last_error:
@@ -201,9 +213,15 @@ class StrmFlowBridge(_PluginBase):
         if not self._feature('notify_upload') and not self._feature('mp_to_strmflow'):
             return
         data = event.event_data
-        paths = transfer_paths(field(data,'transferinfo'))
+        info=field(data,'transferinfo') or field(data,'transfer_info') or data
+        if field(info,'success') is False or field(data,'success') is False:
+            return
+        paths = transfer_paths(info)
+        self._last_transfer=time.strftime('%Y-%m-%d %H:%M:%S')
         key = identity(field(data,'mediainfo'))
         if not paths:
+            if self._feature('notify_upload'):
+                self._queue_upload_ready()
             return
         if field(field(data,'mediainfo'),'episode_group') or field(field(data,'meta'),'episode_group'):
             key=None
@@ -231,6 +249,16 @@ class StrmFlowBridge(_PluginBase):
                 self._state['outbox'][event_id]={'paths':paths}
             self.save_data('bridge_state',self._state)
         self._schedule_refresh('StrmFlow 硬链接完成通知')
+
+    def _queue_upload_ready(self):
+        # The host emitted TransferComplete, but legacy payloads may omit file
+        # details. Only wake the bound task; never invent media completion facts.
+        with self._lock:
+            import uuid
+            self._state['outbox']['upload:scan']={'upload_ready':uuid.uuid4().hex}
+            self.save_data('bridge_state',self._state)
+        logger.info('StrmFlow 收到成功入库事件：已保存绑定任务扫描通知')
+        self._schedule_refresh('StrmFlow 入库上传触发')
 
     @eventmanager.register(EventType.SubscribeAdded)
     @eventmanager.register(EventType.SubscribeModified)
@@ -347,18 +375,18 @@ class StrmFlowBridge(_PluginBase):
             section('连接设置','地址与密钥可以先填写，功能开关默认全部关闭。',[
                 column('VTextField',{'model':'url','label':'StrmFlow 地址','placeholder':'http://NAS_IP:18766','variant':'outlined'},6),
                 column('VTextField',{'model':'token','label':'专用联动密钥','type':'password','autocomplete':'new-password','variant':'outlined'},6)]),
-            section('上传通知','仅通知主程序中已经配置好的上传任务。',[switch('notify_upload','硬链接完成后通知上传','主程序需先绑定上传任务并配置目录映射。')]),
+            section('上传通知','仅通知主程序中已经配置好的上传任务。',[switch('notify_upload','硬链接完成后通知上传','主程序需绑定上传任务；未设置外部路径映射时仅唤醒绑定任务扫描。'),switch('test_upload_once','保存后测试一次上传触发','只扫描主程序已绑定目录，发送成功后自动关闭。')]),
             section('订阅同步','只同步需要交给 StrmFlow 搜索的订阅。',[switch('sync_subscriptions','将 MP 订阅同步到 StrmFlow','新增、修改和主动取消订阅时同步；关闭不会删除媒体。')]),
             section('双向去重与完成','两个方向可以分别开启，自动完成订阅另行授权。',[
                 switch('mp_to_strmflow','MP 入库后通知 StrmFlow 跳过','只发送成功入库的电影或准确季集。'),
                 switch('strmflow_to_mp','采用 StrmFlow 入库结果进行 MP 去重','仅过滤后续下载；不启用订阅同步也可以使用。'),
                 switch('complete_subscriptions','自动更新 MP 进度并完成订阅','需同时开启上一项；关闭时不修改 MP 订阅进度或完成状态。')])]
-        defaults={'enabled':False,'url':'','token':'',**{key:False for key in self.FEATURES}}
+        defaults={'enabled':False,'url':'','token':'','test_upload_once':False,**{key:False for key in self.FEATURES}}
         return [{'component':'VForm','content':[{'component':'VRow','content':content}]}],defaults
 
     def get_page(self):
         """Show active feature selection and durable pending work without secrets."""
         labels={'notify_upload':'上传通知','sync_subscriptions':'订阅同步','mp_to_strmflow':'MP → StrmFlow','strmflow_to_mp':'StrmFlow → MP','complete_subscriptions':'订阅自动完成'}
         active='、'.join(label for key,label in labels.items() if self._feature(key))
-        text=('已启用：'+active if active else '当前未启用联动功能')+f"。待发通知 {len(self._state.get('outbox',{}))} 条。"
+        text=('已启用：'+active if active else '当前未启用联动功能')+f"。待发通知 {len(self._state.get('outbox',{}))} 条。最近入库事件：{self._last_transfer}；最近上传触发确认：{self._last_upload_ack or '暂无'}。"
         return [{'component':'VAlert','props':{'type':'info','variant':'tonal','text':text}}, {'component':'VAlert','props':{'type':'warning' if self._last_error else 'info','variant':'tonal','text':self._last_error or (f'最近通信成功：{self._last_exchange}；可同步订阅 {self._subscription_count} 条' if self._last_exchange else '尚无成功通信记录。订阅对账每 15 秒执行，上传通知在收到成功入库事件后执行。')}}]

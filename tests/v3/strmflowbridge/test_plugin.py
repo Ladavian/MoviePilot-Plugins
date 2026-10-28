@@ -37,7 +37,7 @@ def load_plugin():
     module('app');module('app.sdk');module('app.sdk.plugin',_PluginBase=HostBase)
     event_manager=types.SimpleNamespace(register=lambda *_:lambda fn:fn)
     module('app.sdk.events',Event=object,eventmanager=event_manager)
-    module('app.sdk.logging',logger=types.SimpleNamespace(warning=lambda *_:None))
+    module('app.sdk.logging',logger=types.SimpleNamespace(warning=lambda *_:None,info=lambda *_:None))
     module('app.sdk.media',MetaInfo=lambda name:types.SimpleNamespace(name=name),MetaInfoPath=lambda name:None,MediaInfo=lambda **kw:types.SimpleNamespace(**kw))
     module('app.sdk.scheduler',add_plugin_once_job=lambda *a,**kw:True,remove_plugin_once_job=lambda *a:None)
     module('app.schemas');module('app.schemas.types',EventType=types.SimpleNamespace(TransferComplete='transfer',SubscribeAdded='added',SubscribeModified='modified',SubscribeDeleted='deleted'),ChainEventType=types.SimpleNamespace(ResourceSelection='selection',ResourceDownload='download'),MediaType=types.SimpleNamespace(MOVIE='电影',TV='电视剧'))
@@ -159,3 +159,17 @@ class BusyEventTests(unittest.TestCase):
             self.assertEqual(len(calls),1)
             self.assertEqual(calls[0]['delay_seconds'],1)
         finally:runtime.scheduler_sdk.add_plugin_once_job=original
+
+class UploadFallbackTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):cls.plugin_class=load_plugin()
+    def plugin(self):
+        plugin=self.plugin_class();plugin.init_plugin({'enabled':True,**{k:(k=='notify_upload') for k in plugin.FEATURES}});return plugin
+    def test_completed_legacy_event_without_paths_wakes_only_bound_task(self):
+        plugin=self.plugin();plugin.transfer_complete(types.SimpleNamespace(event_data={'mediainfo':{'media_source':'themoviedb','media_id':'42','type':'电影'}}))
+        captured=[];plugin._request=lambda body,**kw:(captured.append(body) or {'protocol':1,'accepted':True,'upload_accepted':True,'available':[]})
+        plugin.refresh();self.assertTrue(captured[0]['upload_ready']);self.assertEqual(captured[0]['paths'],[]);self.assertNotIn('completed',captured[0]);self.assertEqual(plugin._state['outbox'],{});self.assertTrue(plugin._last_upload_ack)
+    def test_explicit_failed_event_never_wakes_upload(self):
+        plugin=self.plugin();plugin.transfer_complete(types.SimpleNamespace(event_data={'transferinfo':{'success':False}}));self.assertEqual(plugin._state['outbox'],{})
+    def test_failed_ack_preserves_generic_ready_notification(self):
+        plugin=self.plugin();plugin._queue_upload_ready();plugin._request=lambda *a,**kw:{'protocol':1,'accepted':True,'upload_accepted':False,'upload_error':'plan','available':[]};plugin.refresh();self.assertIn('upload:scan',plugin._state['outbox'])
