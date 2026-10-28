@@ -26,8 +26,8 @@ class StrmFlowBridge(_PluginBase):
     """Sync subscriptions and acquired movie/episode facts through a scoped protocol."""
     plugin_name = 'StrmFlow 联动'
     plugin_desc = '硬链接完成上传通知、订阅镜像与电影/逐集双向去重（MoviePilot V3）'
-    plugin_icon = 'https://raw.githubusercontent.com/Ladavian/strmflow-moviepilot/main/icons/strmflow.png'
-    plugin_version = '1.0.1'
+    plugin_icon = 'https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png'
+    plugin_version = '1.0.2'
     plugin_author = 'Ladavian'
     author_url = 'https://github.com/Ladavian'
     plugin_config_prefix = 'strmflowbridge_'

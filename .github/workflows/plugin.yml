@@ -1,4 +1,4 @@
-name: Test and package MoviePilot plugin
+name: Test and package MoviePilot plugins
 on:
   push:
     branches: [main]
@@ -16,25 +16,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m compileall -q plugins.v3 && python -m unittest discover -s tests/v3/strmflowbridge
+      - run: python -m compileall -q plugins.v3 && for directory in tests/v3/*; do python -m unittest discover -s "$directory"; done
       - name: Validate plugin version
         run: |
           python - <<'PY'
           import ast, json
           from pathlib import Path
-          tree = ast.parse(Path('plugins.v3/strmflowbridge/__init__.py').read_text())
-          plugin = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'StrmFlowBridge')
-          version = next(ast.literal_eval(node.value) for node in plugin.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'plugin_version' for target in node.targets))
-          entry = json.loads(Path('package.v3.json').read_text())['StrmFlowBridge']
-          assert entry['version'] == version
-          assert next(iter(entry['history'])) == 'v' + version
+          for plugin_id, entry in json.loads(Path('package.v3.json').read_text()).items():
+              tree = ast.parse(Path(f'plugins.v3/{plugin_id.lower()}/__init__.py').read_text())
+              plugin = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == plugin_id)
+              version = next(ast.literal_eval(node.value) for node in plugin.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'plugin_version' for target in node.targets))
+              assert entry['version'] == version
+              assert next(iter(entry['history'])) == 'v' + version
           PY
       - name: Package
         run: |
           python - <<'PY'
           from pathlib import Path
           from zipfile import ZipFile, ZIP_DEFLATED
-          with ZipFile('strmflow-moviepilot-v3.zip', 'w', ZIP_DEFLATED) as bundle:
+          with ZipFile('moviepilot-plugins-v3.zip', 'w', ZIP_DEFLATED) as bundle:
               for name in ('package.v3.json','README.md'):
                   bundle.write(name)
               for root in ('plugins.v3','icons'):
@@ -44,8 +44,8 @@ jobs:
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: strmflow-moviepilot-v3
-          path: strmflow-moviepilot-v3.zip
+          name: moviepilot-plugins-v3
+          path: moviepilot-plugins-v3.zip
   release:
     if: startsWith(github.ref, 'refs/tags/')
     needs: test
@@ -55,10 +55,10 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: strmflow-moviepilot-v3
+          name: moviepilot-plugins-v3
       - name: Release plugin
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" strmflow-moviepilot-v3.zip --title "$RELEASE_TAG" --notes "MoviePilot V3 · StrmFlow subscription and confirmed-transfer integration"
+        run: gh release create "$RELEASE_TAG" moviepilot-plugins-v3.zip --title "$RELEASE_TAG" --notes "MoviePilot V3 plugin collection"
