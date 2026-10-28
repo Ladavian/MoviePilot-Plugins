@@ -1,0 +1,11 @@
+{
+  "StrmFlowBridge": {
+    "name": "StrmFlow 联动",
+    "description": "MoviePilot V3：硬链接完成上传、订阅同步与电影/逐集双向去重",
+    "version": "1.0.0",
+    "icon": "https://raw.githubusercontent.com/Ladavian/strmflow-moviepilot/main/icons/strmflow.png",
+    "author": "Ladavian",
+    "level": 1,
+    "history": {"v1.0.0": "首次提供 V3 专用联动、持久化通知和逐集去重"}
+  }
+}

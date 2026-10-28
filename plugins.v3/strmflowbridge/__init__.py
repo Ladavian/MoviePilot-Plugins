@@ -1,0 +1,273 @@
+"""MoviePilot V3 companion: confirmed media facts and durable upload notifications."""
+import json
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from apscheduler.triggers.cron import CronTrigger
+from app.sdk.plugin import _PluginBase
+from app.sdk.events import Event, eventmanager
+from app.sdk.logging import logger
+from app.sdk.media import MetaInfo, MetaInfoPath, MediaInfo
+from app.sdk import scheduler as scheduler_sdk
+from app.schemas.types import EventType, ChainEventType, MediaType
+from app.db.oper.subscribe import SubscribeOper
+from .bridge import field, write, value, identity, episode_scope, remaining_context, transfer_paths
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never forward the dedicated integration token to a redirected destination."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+class StrmFlowBridge(_PluginBase):
+    """Sync subscriptions and acquired movie/episode facts through a scoped protocol."""
+    plugin_name = 'StrmFlow 联动'
+    plugin_desc = '硬链接完成上传通知、订阅镜像与电影/逐集双向去重（MoviePilot V3）'
+    plugin_icon = 'https://raw.githubusercontent.com/Ladavian/strmflow-moviepilot/main/icons/strmflow.png'
+    plugin_version = '1.0.0'
+    plugin_author = 'Ladavian'
+    author_url = 'https://github.com/Ladavian'
+    plugin_config_prefix = 'strmflowbridge_'
+    plugin_order = 50
+    auth_level = 1
+    _enabled = False
+
+    def init_plugin(self, config=None):
+        """Load configuration and durable pending events; no credentials are logged."""
+        self._lock = threading.RLock()
+        self._exchange_lock = threading.Lock()
+        self._config = config or {}
+        self._enabled = bool(self._config.get('enabled'))
+        self._url = str(self._config.get('url') or '').rstrip('/')
+        self._token = str(self._config.get('token') or '')
+        self._notify_upload = bool(self._config.get('notify_upload', True))
+        self._state = self.get_data('bridge_state') or {'outbox':{},'confirmed':[]}
+        self._available = {}
+        self._last_ok = 0
+        self._last_error = ''
+        if self._enabled:
+            scheduler_sdk.add_plugin_once_job(self.__class__.__name__, 'refresh', self.refresh, 'StrmFlow 联动初始化', delay_seconds=3)
+
+    def get_state(self):
+        """Report plugin enablement to MoviePilot."""
+        return self._enabled
+
+    @staticmethod
+    def get_command():
+        """This plugin has no chat commands."""
+        return []
+
+    def get_api(self):
+        """Polling avoids opening an additional callback endpoint in MoviePilot."""
+        return []
+
+    def get_service(self):
+        """Use the host scheduler and serialize all exchange requests."""
+        return [{'id':f'{self.__class__.__name__}.Refresh','name':'StrmFlow 订阅与入库对账','trigger':CronTrigger(second='*/15'),'func':self.refresh,'kwargs':{}}] if self._enabled else []
+
+    def stop_service(self):
+        """Stop accepting work and cancel instance-owned delayed jobs."""
+        self._enabled = False
+        scheduler_sdk.remove_plugin_once_job(self.__class__.__name__, 'refresh')
+
+    def _subscriptions(self):
+        """Read host subscriptions through Oper, preserving per-season boundaries."""
+        result = []
+        for sub in SubscribeOper().list():
+            key = identity(sub)
+            if not key or field(sub, 'episode_group') or field(sub, 'best_version'):
+                continue
+            result.append({'id':str(sub.id),'tmdb_id':key[0],'media_type':key[1],'title':sub.name or '', 'year':str(field(sub,'year') or ''),'season':int(field(sub,'season') or 0),'start':int(field(sub,'start_episode') or 0),'end':int(field(sub,'total_episode') or 0),'paused':field(sub,'state')=='P'})
+        return result
+
+    def _request(self, payload, timeout=10):
+        """Send one bounded POST without automatic replay or credential redirects."""
+        parsed = urllib.parse.urlsplit(self._url)
+        if parsed.scheme not in ('http','https') or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError('StrmFlow 地址格式不正确')
+        if not self._token:
+            raise ValueError('请填写 StrmFlow 专用联动密钥')
+        data = json.dumps(payload, ensure_ascii=False).encode()
+        if len(data) > 4*1024*1024:
+            raise ValueError('联动数据超过 4 MiB，请分批处理')
+        req = urllib.request.Request(self._url+'/api/integrations/moviepilot/exchange',data=data,headers={'Content-Type':'application/json','X-StrmFlow-Token':self._token},method='POST')
+        with urllib.request.build_opener(_NoRedirect).open(req, timeout=timeout) as response:
+            raw = response.read(8*1024*1024+1)
+        if len(raw)>8*1024*1024:
+            raise ValueError('联动响应过大')
+        result = json.loads(raw)
+        if result.get('protocol') != 1 or not result.get('accepted'):
+            raise ValueError('联动协议不匹配')
+        return result
+
+    def refresh(self):
+        """Retry durable facts until acknowledged, then update host progress."""
+        if not self._enabled or not self._exchange_lock.acquire(blocking=False):
+            return
+        try:
+            with self._lock:
+                pending = dict(self._state['outbox'])
+            selected = dict(list(pending.items())[:100])
+            result = self._request({'subscriptions':self._subscriptions(),'completed':[e['completed'] for e in selected.values() if e.get('completed')],'removed':[e['removed'] for e in selected.values() if e.get('removed')],'paths':sorted({p for e in selected.values() for p in e.get('paths',[])})[:1000]})
+            with self._lock:
+                self._available = {(int(r['tmdb_id']),r['media_type']):r for r in result['available']}
+                self._last_ok = time.monotonic()
+                for key, event in selected.items():
+                    if event.get('completed') and event['completed'] not in self._state['confirmed']:
+                        self._state['confirmed'].append(event['completed'])
+                    self._state['outbox'].pop(key,None)
+                self.save_data('bridge_state',self._state)
+            self._apply_progress()
+            self._last_error = ''
+        except Exception as error:
+            # Never include HTTP exception URLs/bodies, tokens, file paths, or credentials.
+            reason = f'联动暂未完成（{type(error).__name__}），通知已保留等待重试'
+            if reason != self._last_error:
+                logger.warning(reason)
+                self._last_error = reason
+        finally:
+            self._exchange_lock.release()
+
+    @eventmanager.register(EventType.TransferComplete)
+    def transfer_complete(self, event: Event):
+        """Only successful target media files create acquired-resource facts."""
+        if not self._enabled:
+            return
+        data = event.event_data
+        paths = transfer_paths(field(data,'transferinfo'))
+        key = identity(field(data,'mediainfo'))
+        if not paths or not key:
+            return
+        event_id = str(field(data,'idempotency_key') or field(data,'transfer_history_id') or '')
+        if not event_id:
+            import hashlib
+            event_id = hashlib.sha256(json.dumps(paths).encode()).hexdigest()
+        if key[1]=='movie':
+            facts=[{'tmdb_id':key[0],'media_type':'movie','season':0,'episodes':[],'event_id':event_id}]
+        else:
+            grouped={}
+            for path in paths:
+                season,episodes=episode_scope(MetaInfoPath(path))
+                if season is not None:
+                    grouped.setdefault(season,set()).update(episodes)
+            # Ambiguous file names are never guessed from the whole season/pack event.
+            facts=[{'tmdb_id':key[0],'media_type':'tv','season':season,'episodes':sorted(eps),'event_id':event_id} for season,eps in grouped.items() if eps]
+        with self._lock:
+            if facts:
+                for index,fact in enumerate(facts):
+                    self._state['outbox'][f'{event_id}:{index}']={'completed':fact,'paths':paths if index==0 and self._notify_upload else []}
+            elif self._notify_upload:
+                self._state['outbox'][event_id]={'paths':paths}
+            self.save_data('bridge_state',self._state)
+        scheduler_sdk.add_plugin_once_job(self.__class__.__name__,'refresh',self.refresh,'StrmFlow 硬链接完成通知',delay_seconds=1)
+
+    @eventmanager.register(EventType.SubscribeAdded)
+    @eventmanager.register(EventType.SubscribeModified)
+    def subscription_changed(self, event: Event):
+        """Coalesce subscription edits without performing network work on the event thread."""
+        if self._enabled:
+            scheduler_sdk.add_plugin_once_job(self.__class__.__name__,'refresh',self.refresh,'StrmFlow 订阅同步',delay_seconds=1)
+
+    def _refresh_available(self):
+        """Use a short live check before download selection, without blocking on a retry."""
+        if time.monotonic()-self._last_ok < 3 or not self._exchange_lock.acquire(blocking=False):
+            return
+        try:
+            result=self._request({},timeout=3)
+            with self._lock:
+                self._available={(int(r['tmdb_id']),r['media_type']):r for r in result['available']}
+                self._last_ok=time.monotonic()
+        except Exception:
+            pass
+        finally:
+            self._exchange_lock.release()
+
+    @eventmanager.register(EventType.SubscribeDeleted)
+    def subscription_deleted(self, event: Event):
+        """Mirror explicit removals; automatic completion still waits for acquired facts."""
+        remote_id=field(event.event_data,'subscribe_id')
+        if not self._enabled or remote_id is None:
+            return
+        with self._lock:
+            self._state['outbox'][f'removed:{remote_id}']={'removed':str(remote_id)}
+            self.save_data('bridge_state',self._state)
+        scheduler_sdk.add_plugin_once_job(self.__class__.__name__,'refresh',self.refresh,'StrmFlow 取消订阅同步',delay_seconds=1)
+
+    @eventmanager.register(ChainEventType.ResourceSelection)
+    def filter_resources(self, event: Event):
+        """Exclude confirmed movies and constrain TV packs to remaining episodes."""
+        if not self._enabled:
+            return
+        self._refresh_available()
+        if time.monotonic()-self._last_ok>60:
+            return
+        data=event.event_data
+        contexts=field(data,'updated_contexts') if field(data,'updated') else field(data,'contexts',[])
+        if contexts is None:
+            return
+        with self._lock:
+            available=dict(self._available)
+        changed=False;remaining=[]
+        for context in contexts:
+            item=remaining_context(context,available)
+            changed=changed or item is not context
+            if item is not None:
+                remaining.append(item)
+        if changed:
+            write(data,'updated',True);write(data,'updated_contexts',remaining);write(data,'source','StrmFlow 已入库去重')
+
+    @eventmanager.register(ChainEventType.ResourceDownload)
+    def prevent_duplicate_download(self,event: Event):
+        """Final guard for direct movie/single-episode download paths."""
+        if not self._enabled:
+            return
+        self._refresh_available()
+        if time.monotonic()-self._last_ok>60:
+            return
+        data=event.event_data
+        if field(data,'cancel'):
+            return
+        if field(data,'context') is None:
+            return
+        with self._lock:
+            item=remaining_context(field(data,'context'),self._available)
+        if item is None:
+            write(data,'cancel',True);write(data,'source','StrmFlow');write(data,'reason','对应资源已经成功入库')
+
+    def _apply_progress(self):
+        """Preserve MP notes; complete via the public host Chain after exact confirmation."""
+        from app.chain.subscribe import SubscribeChain
+        for sub in SubscribeOper().list():
+            key=identity(sub)
+            if not key or field(sub,'episode_group') or field(sub,'best_version') or field(sub,'state')=='P':
+                continue
+            own=self._available.get(key,{})
+            acquired=set(own.get('episodes',{}).get(str(field(sub,'season') or 0),[]))
+            for fact in self._state['confirmed']:
+                if (fact['tmdb_id'],fact['media_type'])==key and fact['season']==(field(sub,'season') or 0):
+                    acquired.update(fact['episodes'])
+            complete=bool(own.get('movie')) if key[1]=='movie' else False
+            if key[1]=='tv' and acquired:
+                start=max(int(field(sub,'start_episode') or 1),1);end=int(field(sub,'total_episode') or 0)
+                relevant={e for e in acquired if e>=start and (end<=0 or e<=end)}
+                note=sorted(set(field(sub,'note') or [])|relevant)
+                if note!=(field(sub,'note') or []):
+                    sub=SubscribeOper().update(sub.id,{'note':note}) or sub
+                complete=end>=start and set(range(start,end+1))<=acquired
+            if complete:
+                media=MediaInfo(title=sub.name,year=field(sub,'year'),type=MediaType.MOVIE if key[1]=='movie' else MediaType.TV,media_source='tmdb',media_id=str(key[0]),tmdb_id=key[0])
+                meta=MetaInfo(sub.name);meta.type=MediaType.MOVIE if key[1]=='movie' else MediaType.TV
+                # The public Chain writes completion history and dispatches normal completion effects.
+                SubscribeChain().finish_subscribe_or_not(subscribe=sub,meta=meta,mediainfo=media,force=True)
+
+    def get_form(self):
+        """Expose only the dedicated StrmFlow connection and upload switch."""
+        fields=[('enabled','VSwitch','启用联动'),('url','VTextField','StrmFlow 地址'),('token','VTextField','专用联动密钥'),('notify_upload','VSwitch','硬链接完成后通知上传')]
+        return [{'component':'VForm','content':[{'component':component,'props':dict(model=model,label=label,**({'type':'password'} if model=='token' else {}))} for model,component,label in fields]}],{'enabled':False,'url':'','token':'','notify_upload':True}
+
+    def get_page(self):
+        """Show queue health without exposing media paths or secrets."""
+        return [{'component':'VAlert','props':{'type':'info','variant':'tonal','text':f"待确认通知 {len(self._state.get('outbox',{}))} 条。默认每 15 秒对账；只以成功入库事实跳过电影或对应剧集。"}}]

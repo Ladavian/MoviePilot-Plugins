@@ -1,0 +1,64 @@
+name: Test and package MoviePilot plugin
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m compileall -q plugins.v3 && python -m unittest discover -s tests/v3/strmflowbridge
+      - name: Validate plugin version
+        run: |
+          python - <<'PY'
+          import ast, json
+          from pathlib import Path
+          tree = ast.parse(Path('plugins.v3/strmflowbridge/__init__.py').read_text())
+          plugin = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'StrmFlowBridge')
+          version = next(ast.literal_eval(node.value) for node in plugin.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'plugin_version' for target in node.targets))
+          entry = json.loads(Path('package.v3.json').read_text())['StrmFlowBridge']
+          assert entry['version'] == version
+          assert next(iter(entry['history'])) == 'v' + version
+          PY
+      - name: Package
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          with ZipFile('strmflow-moviepilot-v3.zip', 'w', ZIP_DEFLATED) as bundle:
+              for name in ('package.v3.json','README.md'):
+                  bundle.write(name)
+              for root in ('plugins.v3','icons'):
+                  for path in Path(root).rglob('*'):
+                      if path.is_file() and '__pycache__' not in path.parts:
+                          bundle.write(path, path.as_posix())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: strmflow-moviepilot-v3
+          path: strmflow-moviepilot-v3.zip
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: strmflow-moviepilot-v3
+      - name: Release plugin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" strmflow-moviepilot-v3.zip --title "$RELEASE_TAG" --notes "MoviePilot V3 · StrmFlow subscription and confirmed-transfer integration"
