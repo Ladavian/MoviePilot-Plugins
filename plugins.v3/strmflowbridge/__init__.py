@@ -27,7 +27,7 @@ class StrmFlowBridge(_PluginBase):
     plugin_name = 'StrmFlow 联动'
     plugin_desc = '硬链接完成上传通知、订阅镜像与电影/逐集双向去重（MoviePilot V3）'
     plugin_icon = 'https://raw.githubusercontent.com/Ladavian/strmflow-moviepilot/main/icons/strmflow.png'
-    plugin_version = '1.0.0'
+    plugin_version = '1.0.1'
     plugin_author = 'Ladavian'
     author_url = 'https://github.com/Ladavian'
     plugin_config_prefix = 'strmflowbridge_'
@@ -118,10 +118,14 @@ class StrmFlowBridge(_PluginBase):
                 for key, event in selected.items():
                     if event.get('completed') and event['completed'] not in self._state['confirmed']:
                         self._state['confirmed'].append(event['completed'])
-                    self._state['outbox'].pop(key,None)
+                    if not event.get('paths') or result.get('upload_accepted',True):
+                        self._state['outbox'].pop(key,None)
                 self.save_data('bridge_state',self._state)
             self._apply_progress()
-            self._last_error = ''
+            reason='上传通知待接收，请检查 StrmFlow 绑定的上传任务和目录映射' if result.get('upload_error') else ''
+            if reason and reason != self._last_error:
+                logger.warning(reason)
+            self._last_error = reason
         except Exception as error:
             # Never include HTTP exception URLs/bodies, tokens, file paths, or credentials.
             reason = f'联动暂未完成（{type(error).__name__}），通知已保留等待重试'
@@ -139,13 +143,17 @@ class StrmFlowBridge(_PluginBase):
         data = event.event_data
         paths = transfer_paths(field(data,'transferinfo'))
         key = identity(field(data,'mediainfo'))
-        if not paths or not key:
+        if not paths:
             return
+        if field(field(data,'mediainfo'),'episode_group') or field(field(data,'meta'),'episode_group'):
+            key=None
         event_id = str(field(data,'idempotency_key') or field(data,'transfer_history_id') or '')
         if not event_id:
             import hashlib
             event_id = hashlib.sha256(json.dumps(paths).encode()).hexdigest()
-        if key[1]=='movie':
+        if not key:
+            facts=[]
+        elif key[1]=='movie':
             facts=[{'tmdb_id':key[0],'media_type':'movie','season':0,'episodes':[],'event_id':event_id}]
         else:
             grouped={}

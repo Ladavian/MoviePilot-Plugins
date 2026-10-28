@@ -1,6 +1,6 @@
 # StrmFlow × MoviePilot V3
 
-这是 StrmFlow 的 MoviePilot V3 配套插件，使用稳定 SDK、公开订阅 Oper 和公开 SubscribeChain。本插件支持 MoviePilot **V3**，版本 1.0.0。源码位于仓库根目录 `plugins.v3/strmflowbridge`，市场索引为根目录 `package.v3.json`。这是独立公开项目，StrmFlow 主程序继续保存在私有仓库中。仓库不包含任何用户的密钥、站点配置或媒体数据。
+这是 StrmFlow 的 MoviePilot V3 配套插件，使用稳定 SDK、公开订阅 Oper 和公开 SubscribeChain。本插件支持 MoviePilot **V3**，版本 1.0.1。源码位于仓库根目录 `plugins.v3/strmflowbridge`，市场索引为根目录 `package.v3.json`。这是独立公开项目，StrmFlow 主程序继续保存在私有仓库中。仓库不包含任何用户的密钥、站点配置或媒体数据。
 
 支持 StrmFlow v0.2.0 的联动协议 v1。插件版本与 StrmFlow 版本分别维护。
 
@@ -18,7 +18,7 @@
 
 - 初次连接和每 15 秒读取 MP 订阅，匹配 TMDB 的电影、剧集及季/集段范围。MP 主动新增、修改和取消订阅会触发合并通知；不会覆盖原本手工建立的 StrmFlow 订阅范围。
 - MP 只在 `TransferComplete` 且实际目标视频成功时，记录已入库事实并通知 StrmFlow 上传。下载源路径、失败整理、单纯的 `DownloadAdded` 都不能当作完成。
-- 通知写入插件自有持久化队列；未确认的通知会在下一轮重试，重复通知幂等。单次处理至多 100 条通知。
+- 通知写入插件自有持久化队列；未确认的通知会在下一轮重试，重复通知幂等。单次处理至多 100 条通知。上传映射异常时保留路径通知重试，同时继续对账已入库事实；未绑定上传任务时可仅做订阅联动。无 TMDB 身份的成功硬链接文件仍可通知上传，不猜测其媒体身份。
 - StrmFlow 读取真正有效的 STRM/115 台账，向 MP 返回自己已有的电影及季集。MP 下载选择前短时对账；完整电影/单集直接跳过，已知季集的剧集包用 `allowed_episodes` 限制缺少的集。
 - MP 已入库事实单独存储，参与 StrmFlow 缺集计算，在转存前再检查，不伪装为本地 STRM。StrmFlow 获取的文件仍须进入本人 115、核验并正常整理生成 STRM 后才算已有。
 - MP 的电影、整季/集段范围确实补齐后，通过公开 `SubscribeChain.finish_subscribe_or_not` 完成，让 MP 正常写入历史及发布完成事件。部分剧集只更新 `note`，不会结束整季。

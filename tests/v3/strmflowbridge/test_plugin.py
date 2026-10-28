@@ -83,4 +83,20 @@ class PluginTests(unittest.TestCase):
     def test_stop_prevents_queued_network_work(self):
         self.plugin.stop_service();self.plugin._request=lambda *a,**kw:self.fail('network work after stop');self.plugin.refresh()
 
+
+class AdditionalPluginTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):cls.plugin_class=load_plugin()
+    setUp=PluginTests.setUp
+    def test_upload_failure_keeps_path_notification(self):
+        self.plugin._state['outbox']['event1']={'paths':['/media/Movie.mkv'],'completed':{'tmdb_id':42,'media_type':'movie','season':0,'episodes':[]}}
+        self.plugin._request=lambda *a,**kw:{'available':[],'accepted':True,'protocol':1,'upload_accepted':False,'upload_error':'mapping'}
+        self.plugin.refresh();self.assertIn('event1',self.plugin._state['outbox']);self.assertEqual(len(self.plugin._state['confirmed']),1)
+
+    def test_unknown_media_still_notifies_successful_upload(self):
+        self.plugin._notify_upload=True
+        event=types.SimpleNamespace(event_data={'mediainfo':{'media_source':'douban','media_id':'42','type':'电影'},'transferinfo':{'success':True,'file_list_new':['/media/Unknown.mkv']},'idempotency_key':'unknown1'})
+        self.plugin.transfer_complete(event)
+        self.assertEqual(self.plugin._state['outbox']['unknown1'],{'paths':['/media/Unknown.mkv']})
+
 if __name__=='__main__':unittest.main()

@@ -59,6 +59,8 @@ def episode_scope(meta):
 
 def remaining_context(context, available):
     """Filter already acquired files, retaining an exact allowed-episode set for packs."""
+    if field(field(context,'mediainfo'),'episode_group') or field(field(context,'meta'),'episode_group'):
+        return context
     key = identity(field(context, 'mediainfo'))
     found = available.get(key) if key else None
     if not found:

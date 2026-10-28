@@ -30,4 +30,10 @@ class BridgeTests(unittest.TestCase):
         context=self.context();context.allowed_episodes={2,3}
         self.assertEqual(bridge.remaining_context(context,{(42,'tv'):{'episodes':{'1':[2]}}}).allowed_episodes,{3})
 
+
+class CustomGroupTests(unittest.TestCase):
+    def test_custom_group_context_is_not_filtered(self):
+        context={'mediainfo':{'media_source':'tmdb','media_id':'42','type':'电视剧','episode_group':'group-a'},'meta':{'begin_season':1,'begin_episode':1}}
+        self.assertIs(bridge.remaining_context(context,{(42,'tv'):{'episodes':{'1':[1]}}}),context)
+
 if __name__=='__main__':unittest.main()
