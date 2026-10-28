@@ -17,6 +17,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m compileall -q plugins.v3 && for directory in tests/v3/*; do python -m unittest discover -s "$directory"; done
+      - run: python -m unittest discover -s scripts/tests
       - name: Validate plugin version
         run: |
           python - <<'PY'
@@ -62,3 +63,17 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: gh release create "$RELEASE_TAG" moviepilot-plugins-v3.zip --title "$RELEASE_TAG" --notes "MoviePilot V3 plugin collection"
+
+  cleanup:
+    needs: [test, release]
+    if: always() && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep five packages and three build runs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/retain-builds.py --workflow plugin.yml --keep-builds 5 --keep-runs 3 --releases --apply

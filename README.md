@@ -38,3 +38,5 @@ tests/v3/<插件ID小写>/     协议及宿主合同测试
 ```
 
 开发与维护遵循 [MoviePilot V3 插件开发指南](https://github.com/jxxghp/MoviePilot-Plugins/blob/main/docs/Plugin_Development.md)。提交前应核对版本、市场索引和更新记录，执行相应测试，并在真实 MP V3 宿主中验证插件。
+
+构建包保留最近 5 次发布，构建任务记录保留最近 3 次。各插件可独立配置；StrmFlow 联动的总开关与所有功能开关默认关闭。

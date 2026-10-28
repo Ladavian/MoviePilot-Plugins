@@ -1,6 +1,6 @@
 # StrmFlow × MoviePilot V3
 
-这是 StrmFlow 的 MoviePilot V3 配套插件，使用稳定 SDK、公开订阅 Oper 和公开 SubscribeChain。本插件支持 MoviePilot **V3**，版本 1.0.2。源码位于仓库根目录 `plugins.v3/strmflowbridge`，市场索引为根目录 `package.v3.json`。这是独立公开项目，StrmFlow 主程序继续保存在私有仓库中。仓库不包含任何用户的密钥、站点配置或媒体数据。
+这是 StrmFlow 的 MoviePilot V3 配套插件，使用稳定 SDK、公开订阅 Oper 和公开 SubscribeChain。本插件支持 MoviePilot **V3**，版本 1.0.3。源码位于仓库根目录 `plugins.v3/strmflowbridge`，市场索引为根目录 `package.v3.json`。这是独立公开项目，StrmFlow 主程序继续保存在私有仓库中。仓库不包含任何用户的密钥、站点配置或媒体数据。
 
 支持 StrmFlow v0.2.0 的联动协议 v1。插件版本与 StrmFlow 版本分别维护。
 
@@ -14,7 +14,22 @@
 4. 在 MP 插件中填写可访问的 StrmFlow 根地址和专用密钥，启用。填写根地址，例如 `http://strmflow:18766`，不要附加 `/api`。MP 不在同一个 Docker 网络时使用 NAS 的局域网地址及实际管理端口。
 5. StrmFlow 的订阅转存位置沿用「发现与订阅」默认转存库；请先配置它和可用的资源来源。首次订阅镜像会立即排一次检查；后续检查使用 StrmFlow 的订阅计划。
 
-## 工作方式
+## 功能开关
+
+总开关及所有功能开关默认关闭。升级旧版时，会先暂停旧联动配置，保留地址、密钥和待发通知；主程序配置好后再逐项开启。
+
+| 开关 | 作用 |
+| --- | --- |
+| 总开关 | 控制整个插件；关闭时不运行任何联动 |
+| 上传通知 | 硬链接完成后通知主程序上传 |
+| 订阅同步 | 将 MP 订阅新增、修改及主动取消同步给 StrmFlow |
+| MP → StrmFlow | MP 成功入库后，让 StrmFlow 跳过相同资源 |
+| StrmFlow → MP | 读取 StrmFlow 已入库资源，过滤 MP 后续重复下载 |
+| 自动完成订阅 | 在上一项也开启时，更新 MP 进度并通过正常流程完成订阅 |
+
+可以只开上传，或只开某一方向的去重。只读去重不会创建 StrmFlow 订阅；关闭自动完成时不改写 MP 进度。禁用功能的旧通知保留在队列中，不会被其他功能误消费。
+
+## 工作方式（按对应开关执行）
 
 - 初次连接和每 15 秒读取 MP 订阅，匹配 TMDB 的电影、剧集及季/集段范围。MP 主动新增、修改和取消订阅会触发合并通知；不会覆盖原本手工建立的 StrmFlow 订阅范围。
 - MP 只在 `TransferComplete` 且实际目标视频成功时，记录已入库事实并通知 StrmFlow 上传。下载源路径、失败整理、单纯的 `DownloadAdded` 都不能当作完成。

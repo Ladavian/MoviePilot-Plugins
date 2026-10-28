@@ -14,6 +14,7 @@ def module(name, **values):
 
 
 class HostBase:
+    def update_config(self,config):self.updated_config=dict(config)
     def get_data(self,key):return None
     def save_data(self,key,data):self.saved=data
 
@@ -53,7 +54,7 @@ class PluginTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.plugin_class=load_plugin()
     def setUp(self):
-        Oper.rows=[];Chain.finished=[];self.plugin=self.plugin_class();self.plugin.init_plugin({'enabled':True,'notify_upload':False})
+        Oper.rows=[];Chain.finished=[];self.plugin=self.plugin_class();self.plugin.init_plugin({'enabled':True,**{key:True for key in self.plugin.FEATURES},'notify_upload':False})
 
     def test_outbox_survives_failure_and_acknowledges_once(self):
         fact={'tmdb_id':42,'media_type':'movie','season':0,'episodes':[],'event_id':'event1'}
@@ -94,9 +95,36 @@ class AdditionalPluginTests(unittest.TestCase):
         self.plugin.refresh();self.assertIn('event1',self.plugin._state['outbox']);self.assertEqual(len(self.plugin._state['confirmed']),1)
 
     def test_unknown_media_still_notifies_successful_upload(self):
-        self.plugin._notify_upload=True
+        self.plugin._notify_upload=True;self.plugin._features['notify_upload']=True
         event=types.SimpleNamespace(event_data={'mediainfo':{'media_source':'douban','media_id':'42','type':'电影'},'transferinfo':{'success':True,'file_list_new':['/media/Unknown.mkv']},'idempotency_key':'unknown1'})
         self.plugin.transfer_complete(event)
         self.assertEqual(self.plugin._state['outbox']['unknown1'],{'paths':['/media/Unknown.mkv']})
 
 if __name__=='__main__':unittest.main()
+
+class ControlsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):cls.plugin_class=load_plugin()
+    def setUp(self):Oper.rows=[];Chain.finished=[]
+    def configured(self,**features):
+        plugin=self.plugin_class();plugin.init_plugin({'enabled':True,**{key:False for key in plugin.FEATURES},**features});return plugin
+    def test_defaults_and_old_config_stop_all_features(self):
+        plugin=self.plugin_class();plugin.init_plugin({'enabled':True,'notify_upload':True,'url':'http://example.test','token':'saved-token'})
+        self.assertFalse(plugin.get_state());self.assertEqual(plugin.get_service(),[]);self.assertEqual(plugin._token,'saved-token');self.assertTrue(all(not value for value in plugin._features.values()))
+        form,defaults=plugin.get_form();self.assertFalse(defaults['enabled']);self.assertTrue(all(not defaults[key] for key in plugin.FEATURES));self.assertEqual(form[0]['content'][0]['component'],'VRow')
+        plugin._request=lambda *a,**kw:self.fail('disabled configuration sent a request');plugin.refresh()
+    def test_master_on_with_no_features_does_not_connect(self):
+        plugin=self.configured();plugin._request=lambda *a,**kw:self.fail('idle master switch sent a request');plugin.refresh();self.assertEqual(plugin.get_service(),[])
+    def test_upload_only_never_sends_subscriptions_or_acquired_facts(self):
+        plugin=self.configured(notify_upload=True);captured=[]
+        plugin._request=lambda body,**kw:(captured.append(body) or {'available':[],'accepted':True,'protocol':1})
+        plugin._state['outbox']['one']={'paths':['/media/Movie.mkv'],'completed':{'tmdb_id':42,'media_type':'movie'}}
+        plugin.refresh();self.assertEqual(set(captured[0]),{'paths'});self.assertIn('completed',plugin._state['outbox']['one']);self.assertNotIn('paths',plugin._state['outbox']['one'])
+    def test_dedup_only_does_not_mirror_or_modify_subscriptions(self):
+        plugin=self.configured(strmflow_to_mp=True);Oper.rows=[types.SimpleNamespace(id=1,media_source='tmdb',media_id='42',type='电影',episode_group=None,best_version=False,name='Movie',state='R')];captured=[]
+        plugin._request=lambda body,**kw:(captured.append(body) or {'available':[{'tmdb_id':42,'media_type':'movie','movie':True,'episodes':{}}],'accepted':True,'protocol':1})
+        plugin.refresh();self.assertEqual(set(captured[0]),{'lookup'});self.assertEqual(Chain.finished,[])
+    def test_disabled_notification_does_not_enqueue(self):
+        plugin=self.configured(sync_subscriptions=True)
+        plugin.transfer_complete(types.SimpleNamespace(event_data={'mediainfo':{'media_source':'tmdb','media_id':'42','type':'电影'},'transferinfo':{'success':True,'file_list_new':['/media/Movie.mkv']}}))
+        self.assertEqual(plugin._state['outbox'],{})
