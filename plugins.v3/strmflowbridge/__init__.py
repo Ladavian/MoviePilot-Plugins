@@ -28,7 +28,7 @@ class StrmFlowBridge(_PluginBase):
     plugin_name = 'StrmFlow 联动'
     plugin_desc = '硬链接完成上传通知、订阅镜像与电影/逐集双向去重（MoviePilot V3）'
     plugin_icon = 'https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png'
-    plugin_version = '1.0.7'
+    plugin_version = '1.0.8'
     plugin_author = 'Ladavian'
     author_url = 'https://github.com/Ladavian'
     plugin_config_prefix = 'strmflowbridge_'
@@ -58,8 +58,8 @@ class StrmFlowBridge(_PluginBase):
         self._last_error = ''
         self._last_exchange = ''
         self._subscription_count = 0
-        self._last_transfer = '尚未收到成功入库事件'
-        self._last_upload_ack = ''
+        self._last_transfer = self._state.get('last_transfer') or '尚未收到成功入库事件'
+        self._last_upload_ack = self._state.get('last_upload_ack') or ''
         self._refresh_scheduled = False
         if self._config.get('test_upload_once'):
             self._config['test_upload_once']=False
@@ -209,8 +209,11 @@ class StrmFlowBridge(_PluginBase):
                 logger.warning(reason)
             self._last_error=reason
             self._last_exchange=time.strftime('%Y-%m-%d %H:%M:%S')
-            if payload.get('upload_ready') and result.get('upload_accepted',True):
+            if (payload.get('upload_ready') or payload.get('paths')) and result.get('upload_accepted',True):
                 self._last_upload_ack=self._last_exchange
+                with self._lock:
+                    self._state['last_upload_ack']=self._last_upload_ack
+                    self.save_data('bridge_state',self._state)
                 logger.info('StrmFlow 已接收上传触发，主程序按绑定目录检查稳定文件')
         except Exception as error:
             reason=self._error_message(error)
@@ -232,6 +235,8 @@ class StrmFlowBridge(_PluginBase):
             return
         paths = transfer_paths(info)
         self._last_transfer=time.strftime('%Y-%m-%d %H:%M:%S')
+        with self._lock:
+            self._state['last_transfer']=self._last_transfer
         key = identity(field(data,'mediainfo'))
         if not paths:
             if self._feature('notify_upload'):
