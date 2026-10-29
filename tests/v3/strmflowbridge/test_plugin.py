@@ -173,3 +173,26 @@ class UploadFallbackTests(unittest.TestCase):
         plugin=self.plugin();plugin.transfer_complete(types.SimpleNamespace(event_data={'transferinfo':{'success':False}}));self.assertEqual(plugin._state['outbox'],{})
     def test_failed_ack_preserves_generic_ready_notification(self):
         plugin=self.plugin();plugin._queue_upload_ready();plugin._request=lambda *a,**kw:{'protocol':1,'accepted':True,'upload_accepted':False,'upload_error':'plan','available':[]};plugin.refresh();self.assertIn('upload:scan',plugin._state['outbox'])
+
+class CanonicalDownloadGuardTests(ControlsTests):
+    def test_current_v3_final_guard_refreshes_even_recent_inventory(self):
+        import time
+        plugin=self.configured(strmflow_to_mp=True)
+        plugin._last_ok=time.monotonic()
+        plugin._subscriptions=lambda:[]
+        requests=[]
+        def request(body,**kwargs):
+            requests.append(body)
+            return {'protocol':1,'accepted':True,'available':[{'tmdb_id':42,'media_type':'movie','movie':True,'episodes':{}}]}
+        plugin._request=request
+        event=types.SimpleNamespace(event_data={'context':{'media_info':{'media_source':'themoviedb','media_id':'42','type':'电影'},'meta_info':{}}})
+        plugin.prevent_duplicate_download(event)
+        self.assertTrue(event.event_data['cancel'])
+        self.assertEqual(requests[0]['lookup'],[{'tmdb_id':42,'media_type':'movie'}])
+        self.assertEqual(plugin._state['communications'][-1]['action'],'拦截重复下载')
+    def test_communication_history_is_bounded_and_visible(self):
+        plugin=self.configured()
+        for n in range(105):plugin._record_communication('测试',True,str(n))
+        self.assertEqual(len(plugin._state['communications']),100)
+        self.assertEqual(plugin._state['communications'][0]['detail'],'5')
+        self.assertIn('104',str(plugin.get_page()))

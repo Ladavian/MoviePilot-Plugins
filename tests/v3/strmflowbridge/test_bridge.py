@@ -43,3 +43,15 @@ class V3IdentityTests(unittest.TestCase):
         self.assertEqual(bridge.identity({'media_source':'themoviedb','media_id':'297253','type':'电视剧'}),(297253,'tv'))
         self.assertEqual(bridge.identity({'tmdbid':42,'type':'电影'}),(42,'movie'))
         self.assertIsNone(bridge.identity({'media_source':'douban','media_id':'42','type':'电影'}))
+
+class CurrentV3ContextTests(unittest.TestCase):
+    def test_canonical_v3_movie_is_filtered(self):
+        context={'media_info':{'media_source':'themoviedb','media_id':'42','type':'电影'},'meta_info':{}}
+        self.assertIsNone(bridge.remaining_context(context,{(42,'movie'):{'movie':True}}))
+    def test_canonical_v3_episode_is_filtered(self):
+        context={'media_info':{'media_source':'themoviedb','media_id':'42','type':'电视剧'},'meta_info':{'begin_season':1,'begin_episode':2}}
+        self.assertIsNone(bridge.remaining_context(context,{(42,'tv'):{'episodes':{'1':[2]}}}))
+    def test_canonical_v3_pack_keeps_missing_only(self):
+        context={'media_info':{'media_source':'themoviedb','media_id':'42','type':'电视剧'},'meta_info':{'begin_season':1,'begin_episode':1,'end_episode':3}}
+        result=bridge.remaining_context(context,{(42,'tv'):{'episodes':{'1':[1,2]}}})
+        self.assertEqual(result['allowed_episodes'],{3})

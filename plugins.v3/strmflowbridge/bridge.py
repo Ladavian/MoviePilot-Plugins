@@ -59,20 +59,22 @@ def episode_scope(meta):
 
 def remaining_context(context, available):
     """Filter already acquired files, retaining an exact allowed-episode set for packs."""
-    if field(field(context,'mediainfo'),'episode_group') or field(field(context,'meta'),'episode_group'):
+    media = field(context,'media_info') or field(context,'mediainfo')
+    meta = field(context,'meta_info') or field(context,'meta')
+    if field(media,'episode_group') or field(meta,'episode_group'):
         return context
-    key = identity(field(context, 'mediainfo'))
+    key = identity(media)
     found = available.get(key) if key else None
     if not found:
         return context
     if key[1] == 'movie':
         return None if found.get('movie') else context
-    season, episodes = episode_scope(field(context, 'meta'))
+    season, episodes = episode_scope(meta)
     if season is None:
         return context
     if not episodes:
         # Full-season packs may have a known season list in the typed media snapshot.
-        seasons = field(field(context, 'mediainfo'), 'seasons', {}) or {}
+        seasons = field(media, 'seasons', {}) or {}
         episodes = seasons.get(season, seasons.get(str(season), []))
         if not isinstance(episodes, (list, tuple, set)) or not episodes:
             return context

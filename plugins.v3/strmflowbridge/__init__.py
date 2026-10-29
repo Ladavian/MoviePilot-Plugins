@@ -28,7 +28,7 @@ class StrmFlowBridge(_PluginBase):
     plugin_name = 'StrmFlow 联动'
     plugin_desc = '硬链接完成上传通知、订阅镜像与电影/逐集双向去重（MoviePilot V3）'
     plugin_icon = 'https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png'
-    plugin_version = '1.0.5'
+    plugin_version = '1.0.6'
     plugin_author = 'Ladavian'
     author_url = 'https://github.com/Ladavian'
     plugin_config_prefix = 'strmflowbridge_'
@@ -52,6 +52,7 @@ class StrmFlowBridge(_PluginBase):
         self._token = str(self._config.get('token') or '')
         self._notify_upload = self._features['notify_upload']
         self._state = self.get_data('bridge_state') or {'outbox':{},'confirmed':[]}
+        self._state.setdefault('communications',[])
         self._available = {}
         self._last_ok = 0
         self._last_error = ''
@@ -118,6 +119,14 @@ class StrmFlowBridge(_PluginBase):
         self._subscription_count = len(result)
         return result
 
+    def _record_communication(self, action, ok, detail):
+        """Persist bounded, credential-free protocol outcomes for the data panel."""
+        with self._lock:
+            rows=self._state.setdefault('communications',[])
+            rows.append({'at':time.strftime('%Y-%m-%d %H:%M:%S'),'action':action,'ok':ok,'detail':str(detail)[:600]})
+            self._state['communications']=rows[-100:]
+            self.save_data('bridge_state',self._state)
+
     def _request(self, payload, timeout=10):
         """Send one bounded POST without automatic replay or credential redirects."""
         parsed = urllib.parse.urlsplit(self._url)
@@ -136,6 +145,7 @@ class StrmFlowBridge(_PluginBase):
         result = json.loads(raw)
         if result.get('protocol') != 1 or not result.get('accepted'):
             raise ValueError('联动协议不匹配')
+        self._record_communication('通信成功',True,f"同步订阅 {len(payload.get('subscriptions',[]))}；待发通知 {len(payload.get('completed',[]))}；收到入库条目 {len(result.get('available',[]))}；上传接收 {bool(result.get('upload_accepted'))}")
         return result
 
     @staticmethod
@@ -201,6 +211,7 @@ class StrmFlowBridge(_PluginBase):
                 logger.info('StrmFlow 已接收上传触发，主程序按绑定目录检查稳定文件')
         except Exception as error:
             reason=self._error_message(error)
+            self._record_communication('通信失败',False,reason)
             if reason!=self._last_error:
                 logger.warning(reason)
                 self._last_error=reason
@@ -267,18 +278,26 @@ class StrmFlowBridge(_PluginBase):
         if self._feature('sync_subscriptions'):
             self._schedule_refresh('StrmFlow 订阅同步')
 
-    def _refresh_available(self):
+    def _refresh_available(self, force=False, context=None):
         """Read inventory without creating subscriptions when only deduplication is enabled."""
-        if not self._feature('strmflow_to_mp') or time.monotonic()-self._last_ok<3 or not self._exchange_lock.acquire(blocking=False):
+        if not self._feature('strmflow_to_mp') or (not force and time.monotonic()-self._last_ok<3):
+            return
+        if not self._exchange_lock.acquire(timeout=3 if force else 0):
+            self._record_communication('下载前核对等待超时',False,'另一次通信仍在进行，暂未获取最新入库结果')
             return
         try:
             rows=self._subscriptions()
-            result=self._request({'lookup':[{'tmdb_id':row['tmdb_id'],'media_type':row['media_type']} for row in rows]},timeout=3)
+            lookup=[{'tmdb_id':row['tmdb_id'],'media_type':row['media_type']} for row in rows]
+            key=identity(field(context,'media_info') or field(context,'mediainfo')) if context is not None else None
+            if key and not any(row['tmdb_id']==key[0] and row['media_type']==key[1] for row in lookup):
+                lookup.append({'tmdb_id':key[0],'media_type':key[1]})
+            result=self._request({'lookup':lookup},timeout=3)
             with self._lock:
                 self._available={(int(row['tmdb_id']),row['media_type']):row for row in result['available']}
                 self._last_ok=time.monotonic()
-        except Exception:
-            pass
+        except Exception as error:
+            self._last_error=self._error_message(error)
+            self._record_communication('下载前核对失败',False,self._last_error)
         finally:
             self._exchange_lock.release()
 
@@ -314,6 +333,7 @@ class StrmFlowBridge(_PluginBase):
             if item is not None:
                 remaining.append(item)
         if changed:
+            self._record_communication('资源筛选去重',True,f'候选 {len(contexts)} 条，保留 {len(remaining)} 条；剧集包按缺集约束')
             write(data,'updated',True);write(data,'updated_contexts',remaining);write(data,'source','StrmFlow 已入库去重')
 
     @eventmanager.register(ChainEventType.ResourceDownload)
@@ -321,7 +341,7 @@ class StrmFlowBridge(_PluginBase):
         """Final guard for direct movie/single-episode download paths."""
         if not self._feature('strmflow_to_mp'):
             return
-        self._refresh_available()
+        self._refresh_available(force=True,context=field(event.event_data,'context'))
         if time.monotonic()-self._last_ok>60:
             return
         data=event.event_data
@@ -332,6 +352,7 @@ class StrmFlowBridge(_PluginBase):
         with self._lock:
             item=remaining_context(field(data,'context'),self._available)
         if item is None:
+            self._record_communication('拦截重复下载',True,'已确认对应电影或单集成功入库，取消本次下载')
             write(data,'cancel',True);write(data,'source','StrmFlow');write(data,'reason','对应资源已经成功入库')
 
     def _apply_progress(self):
@@ -389,4 +410,6 @@ class StrmFlowBridge(_PluginBase):
         labels={'notify_upload':'上传通知','sync_subscriptions':'订阅同步','mp_to_strmflow':'MP → StrmFlow','strmflow_to_mp':'StrmFlow → MP','complete_subscriptions':'订阅自动完成'}
         active='、'.join(label for key,label in labels.items() if self._feature(key))
         text=('已启用：'+active if active else '当前未启用联动功能')+f"。待发通知 {len(self._state.get('outbox',{}))} 条。最近入库事件：{self._last_transfer}；最近上传触发确认：{self._last_upload_ack or '暂无'}。"
-        return [{'component':'VAlert','props':{'type':'info','variant':'tonal','text':text}}, {'component':'VAlert','props':{'type':'warning' if self._last_error else 'info','variant':'tonal','text':self._last_error or (f'最近通信成功：{self._last_exchange}；可同步订阅 {self._subscription_count} 条' if self._last_exchange else '尚无成功通信记录。订阅对账每 15 秒执行，上传通知在收到成功入库事件后执行。')}}]
+        rows=deepcopy(self._state.get('communications',[]))
+        history=[{'component':'VCard','props':{'variant':'outlined','class':'mb-2'},'content':[{'component':'VCardText','text':f"{row['at']} · {row['action']} · {'成功' if row['ok'] else '失败'}\n{row['detail']}"}]} for row in reversed(rows[-30:])]
+        return [{'component':'VAlert','props':{'type':'info','variant':'tonal','text':text}}, {'component':'VAlert','props':{'type':'warning' if self._last_error else 'info','variant':'tonal','text':self._last_error or (f'最近通信成功：{self._last_exchange}；可同步订阅 {self._subscription_count} 条' if self._last_exchange else '尚无成功通信记录。订阅对账每 15 秒执行，上传通知在收到成功入库事件后执行。')}}]+history
