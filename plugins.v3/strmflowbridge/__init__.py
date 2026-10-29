@@ -28,7 +28,7 @@ class StrmFlowBridge(_PluginBase):
     plugin_name = 'StrmFlow 联动'
     plugin_desc = '硬链接完成上传通知、订阅镜像与电影/逐集双向去重（MoviePilot V3）'
     plugin_icon = 'https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png'
-    plugin_version = '1.0.6'
+    plugin_version = '1.0.7'
     plugin_author = 'Ladavian'
     author_url = 'https://github.com/Ladavian'
     plugin_config_prefix = 'strmflowbridge_'
@@ -145,7 +145,10 @@ class StrmFlowBridge(_PluginBase):
         result = json.loads(raw)
         if result.get('protocol') != 1 or not result.get('accepted'):
             raise ValueError('联动协议不匹配')
-        self._record_communication('通信成功',True,f"同步订阅 {len(payload.get('subscriptions',[]))}；待发通知 {len(payload.get('completed',[]))}；收到入库条目 {len(result.get('available',[]))}；上传接收 {bool(result.get('upload_accepted'))}")
+        inventory=result.get('available',[])
+        acquired=sum(1 for row in inventory if row.get('movie') or any(row.get('episodes',{}).values()))
+        upload=('已接收' if result.get('upload_accepted') else '未接收') if payload.get('upload_ready') or payload.get('paths') else '本次未发送'
+        self._record_communication('通信成功',True,f"同步订阅 {len(payload.get('subscriptions',[]))}；发送入库通知 {len(payload.get('completed',[]))}；查询媒体 {len(inventory)}，已入库 {acquired}；上传通知：{upload}")
         return result
 
     @staticmethod
