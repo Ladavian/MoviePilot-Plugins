@@ -28,7 +28,7 @@ class StrmFlowBridge(_PluginBase):
     plugin_name = 'StrmFlow 联动'
     plugin_desc = '硬链接完成上传通知、订阅镜像与电影/逐集双向去重（MoviePilot V3）'
     plugin_icon = 'https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png'
-    plugin_version = '1.0.8'
+    plugin_version = '1.0.9'
     plugin_author = 'Ladavian'
     author_url = 'https://github.com/Ladavian'
     plugin_config_prefix = 'strmflowbridge_'
@@ -61,6 +61,9 @@ class StrmFlowBridge(_PluginBase):
         self._last_transfer = self._state.get('last_transfer') or '尚未收到成功入库事件'
         self._last_upload_ack = self._state.get('last_upload_ack') or ''
         self._refresh_scheduled = False
+        self._watch_revision = ''
+        self._watch_lock = threading.Lock()
+        self._watch_supported = True
         if self._config.get('test_upload_once'):
             self._config['test_upload_once']=False
             self.update_config(self._config)
@@ -100,8 +103,45 @@ class StrmFlowBridge(_PluginBase):
         return []
 
     def get_service(self):
-        """Use the host scheduler and serialize all exchange requests."""
-        return [{'id':f'{self.__class__.__name__}.Refresh','name':'StrmFlow 订阅与入库对账','trigger':CronTrigger(second='*/15'),'func':self.refresh,'kwargs':{}}] if self._enabled and any(self._features.values()) else []
+        """Host events do normal exchanges; a pending wait receives cloud changes."""
+        if not self._enabled or not any(self._features.values()):
+            return []
+        jobs=[{'id':f'{self.__class__.__name__}.Refresh','name':'StrmFlow 低频补偿对账','trigger':CronTrigger(minute='*/30',second=0),'func':self.refresh,'kwargs':{}}]
+        if self._feature('strmflow_to_mp'):
+            jobs.append({'id':f'{self.__class__.__name__}.Watch','name':'StrmFlow 入库事件等待','trigger':CronTrigger(second=0),'func':self.wait_for_changes,'kwargs':{}})
+        return jobs
+
+    def wait_for_changes(self):
+        """Hold an authenticated request; only a media event causes an exchange."""
+        if not self._feature('strmflow_to_mp') or not self._watch_supported or not self._watch_lock.acquire(blocking=False):
+            return
+        try:
+            parsed=urllib.parse.urlsplit(self._url)
+            if parsed.scheme not in ('http','https') or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or not self._token:
+                return
+            req=urllib.request.Request(self._url+'/api/integrations/moviepilot/wait?'+urllib.parse.urlencode({'revision':self._watch_revision}),headers={'X-StrmFlow-Token':self._token},method='GET')
+            with urllib.request.build_opener(_NoRedirect).open(req,timeout=65) as response:
+                raw=response.read(16385)
+            if len(raw)>16384:
+                raise ValueError('事件响应过大')
+            result=json.loads(raw)
+            if result.get('protocol')!=1 or not isinstance(result.get('revision'),str):
+                raise ValueError('事件协议不匹配')
+            if result.get('changed') and self._feature('strmflow_to_mp'):
+                self._record_communication('主程序入库事件',True,'媒体数据已变化，触发对账')
+                self.refresh()
+            if not self._last_error:
+                self._watch_revision=result['revision']
+        except urllib.error.HTTPError as error:
+            if error.code==404:
+                self._watch_supported=False
+                self._record_communication('事件等待不可用',False,'主程序需更新；暂用每 30 分钟补偿及下载前核对')
+        except Exception:
+            # Network failures do not discard pending facts. Host events and the
+            # low-frequency reconciliation remain independent of this listener.
+            pass
+        finally:
+            self._watch_lock.release()
 
     def stop_service(self):
         """Stop accepting work and cancel instance-owned delayed jobs."""
@@ -420,4 +460,4 @@ class StrmFlowBridge(_PluginBase):
         text=('已启用：'+active if active else '当前未启用联动功能')+f"。待发通知 {len(self._state.get('outbox',{}))} 条。最近入库事件：{self._last_transfer}；最近上传触发确认：{self._last_upload_ack or '暂无'}。"
         rows=deepcopy(self._state.get('communications',[]))
         history=[{'component':'VCard','props':{'variant':'outlined','class':'mb-2'},'content':[{'component':'VCardText','text':f"{row['at']} · {row['action']} · {'成功' if row['ok'] else '失败'}\n{row['detail']}"}]} for row in reversed(rows[-30:])]
-        return [{'component':'VAlert','props':{'type':'info','variant':'tonal','text':text}}, {'component':'VAlert','props':{'type':'warning' if self._last_error else 'info','variant':'tonal','text':self._last_error or (f'最近通信成功：{self._last_exchange}；可同步订阅 {self._subscription_count} 条' if self._last_exchange else '尚无成功通信记录。订阅对账每 15 秒执行，上传通知在收到成功入库事件后执行。')}}]+history
+        return [{'component':'VAlert','props':{'type':'info','variant':'tonal','text':text}}, {'component':'VAlert','props':{'type':'warning' if self._last_error else 'info','variant':'tonal','text':self._last_error or (f'最近通信成功：{self._last_exchange}；可同步订阅 {self._subscription_count} 条' if self._last_exchange else '尚无成功通信记录。订阅对账每 30 分钟补偿；相关事件即时触发执行，上传通知在收到成功入库事件后执行。')}}]+history

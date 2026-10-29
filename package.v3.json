@@ -2,11 +2,12 @@
   "StrmFlowBridge": {
     "name": "StrmFlow 联动",
     "description": "MoviePilot V3：硬链接完成上传、订阅同步与电影/逐集双向去重",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "icon": "https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png",
     "author": "Ladavian",
     "level": 1,
     "history": {
+      "v1.0.9": "相关事件触发联动，入库变化等待通知，取消每15秒全量对账；每30分钟低频补偿",
       "v1.0.8": "带文件路径的正常上传通知同样显示确认时间，入库事件与回执时间跨重启保留",
       "v1.0.7": "通信面板区分未发送上传通知与已接收，区分查询媒体与实际已有入库结果，避免误读",
       "v1.0.6": "修复V3 media_info/meta_info字段导致的漏去重，新增持久通信与拦截结果数据面板",

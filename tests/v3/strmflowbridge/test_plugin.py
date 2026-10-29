@@ -196,3 +196,44 @@ class CanonicalDownloadGuardTests(ControlsTests):
         self.assertEqual(len(plugin._state['communications']),100)
         self.assertEqual(plugin._state['communications'][0]['detail'],'5')
         self.assertIn('104',str(plugin.get_page()))
+
+class EventDrivenTests(ControlsTests):
+    def test_upload_only_has_no_idle_event_listener(self):
+        plugin=self.configured(notify_upload=True)
+        jobs=plugin.get_service()
+        self.assertEqual(len(jobs),1)
+        self.assertEqual(jobs[0]['trigger'],{'minute':'*/30','second':0})
+
+    def test_reverse_feature_has_event_wait_and_low_frequency_compensation(self):
+        plugin=self.configured(strmflow_to_mp=True)
+        jobs=plugin.get_service()
+        self.assertEqual(len(jobs),2)
+        self.assertTrue(any(j['trigger']=={'minute':'*/30','second':0} for j in jobs))
+        self.assertTrue(any(j['func']==plugin.wait_for_changes for j in jobs))
+
+    def test_idle_wait_does_not_exchange_subscriptions(self):
+        import json
+        from unittest.mock import patch
+        plugin=self.configured(strmflow_to_mp=True)
+        plugin._url='http://example.test';plugin._token='x'*64;plugin._watch_revision='boot-1'
+        plugin.refresh=lambda:self.fail('idle wait performed exchange')
+        response=types.SimpleNamespace(read=lambda *_:json.dumps({'protocol':1,'revision':'boot-1','changed':False}).encode())
+        class Opened:
+            def __enter__(self):return response
+            def __exit__(self,*_):return False
+        opener=types.SimpleNamespace(open=lambda *a,**k:Opened())
+        with patch('urllib.request.build_opener',return_value=opener):plugin.wait_for_changes()
+        self.assertEqual(plugin._state['communications'],[])
+
+    def test_media_change_triggers_exchange(self):
+        import json
+        from unittest.mock import patch
+        plugin=self.configured(strmflow_to_mp=True)
+        plugin._url='http://example.test';plugin._token='x'*64;calls=[]
+        plugin.refresh=lambda:calls.append('refresh')
+        response=types.SimpleNamespace(read=lambda *_:json.dumps({'protocol':1,'revision':'boot-2','changed':True}).encode())
+        class Opened:
+            def __enter__(self):return response
+            def __exit__(self,*_):return False
+        with patch('urllib.request.build_opener',return_value=types.SimpleNamespace(open=lambda *a,**k:Opened())):plugin.wait_for_changes()
+        self.assertEqual(calls,['refresh']);self.assertEqual(plugin._watch_revision,'boot-2')
