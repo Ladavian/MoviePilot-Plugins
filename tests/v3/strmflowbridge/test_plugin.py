@@ -237,3 +237,30 @@ class EventDrivenTests(ControlsTests):
             def __exit__(self,*_):return False
         with patch('urllib.request.build_opener',return_value=types.SimpleNamespace(open=lambda *a,**k:Opened())):plugin.wait_for_changes()
         self.assertEqual(calls,['refresh']);self.assertEqual(plugin._watch_revision,'boot-2')
+
+class UploadSchedulingRegressionTests(unittest.TestCase):
+    def test_busy_exchange_does_not_leave_scheduled_flag_stuck(self):
+        cls=load_plugin();p=cls();p.init_plugin({'enabled':True,**{k:True for k in cls.FEATURES}})
+        calls=[]
+        sys.modules[cls.__module__].scheduler_sdk.add_plugin_once_job=lambda *a,**kw:(calls.append(kw) or True)
+        p._refresh_scheduled=True;p._exchange_lock.acquire()
+        try:p.refresh()
+        finally:p._exchange_lock.release()
+        self.assertEqual(len(calls),1);self.assertEqual(calls[0]['delay_seconds'],3)
+
+    def test_failed_upload_retries_without_half_hour_wait(self):
+        cls=load_plugin();p=cls();p.init_plugin({'enabled':True,**{k:True for k in cls.FEATURES}})
+        calls=[]
+        sys.modules[cls.__module__].scheduler_sdk.add_plugin_once_job=lambda *a,**kw:(calls.append(kw) or True)
+        p._state['outbox']['upload']={'paths':['/media/Movie.mkv']}
+        p._request=lambda *_: (_ for _ in ()).throw(OSError('network failure'))
+        p.refresh()
+        self.assertIn('upload',p._state['outbox']);self.assertEqual(calls[-1]['delay_seconds'],15)
+
+    def test_upload_persisted_even_when_episode_parser_fails(self):
+        cls=load_plugin();p=cls();p.init_plugin({'enabled':True,**{k:True for k in cls.FEATURES}})
+        runtime=sys.modules[cls.__module__]
+        runtime.MetaInfoPath=lambda _: (_ for _ in ()).throw(ValueError('metadata error'))
+        event=types.SimpleNamespace(event_data={'mediainfo':{'tmdb_id':42,'type':'电视剧'},'transferinfo':{'success':True,'file_list_new':['/media/Show.S01E01.mkv']}})
+        with self.assertRaises(ValueError):p.transfer_complete(event)
+        self.assertTrue(p._state['outbox']['upload:scan']['upload_ready'])

@@ -28,7 +28,7 @@ class StrmFlowBridge(_PluginBase):
     plugin_name = 'StrmFlow 联动'
     plugin_desc = '硬链接完成上传通知、订阅镜像与电影/逐集双向去重（MoviePilot V3）'
     plugin_icon = 'https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png'
-    plugin_version = '1.0.9'
+    plugin_version = '1.0.10'
     plugin_author = 'Ladavian'
     author_url = 'https://github.com/Ladavian'
     plugin_config_prefix = 'strmflowbridge_'
@@ -202,11 +202,15 @@ class StrmFlowBridge(_PluginBase):
 
     def refresh(self):
         """Send only enabled features; never consume disabled features' queued data."""
-        if not self._enabled or not any(self._features.values()) or not self._exchange_lock.acquire(blocking=False):
+        with self._lock:
+            self._refresh_scheduled=False
+        if not self._enabled or not any(self._features.values()):
+            return
+        if not self._exchange_lock.acquire(blocking=False):
+            self._schedule_refresh('StrmFlow 等待正在进行的通信',3)
             return
         try:
             with self._lock:
-                self._refresh_scheduled=False
                 pending=deepcopy(self._state['outbox'])
             def eligible(event):
                 return (self._feature('notify_upload') and (event.get('paths') or event.get('upload_ready'))) or (self._feature('mp_to_strmflow') and event.get('completed')) or (self._feature('sync_subscriptions') and event.get('removed'))
@@ -263,6 +267,10 @@ class StrmFlowBridge(_PluginBase):
                 self._last_error=reason
         finally:
             self._exchange_lock.release()
+            with self._lock:
+                pending_upload=any(event.get('paths') or event.get('upload_ready') for event in self._state['outbox'].values())
+            if self._feature('notify_upload') and pending_upload:
+                self._schedule_refresh('StrmFlow 未确认上传重试',15)
 
     @eventmanager.register(EventType.TransferComplete)
     def transfer_complete(self, event: Event):
@@ -277,10 +285,13 @@ class StrmFlowBridge(_PluginBase):
         self._last_transfer=time.strftime('%Y-%m-%d %H:%M:%S')
         with self._lock:
             self._state['last_transfer']=self._last_transfer
-        key = identity(field(data,'mediainfo'))
+        self._record_communication('收到整理完成事件',True,f'目标媒体文件 {len(paths)} 个；上传通知已持久保存后发送')
+        # Persist the upload wake-up before optional identity/episode parsing.
+        # A metadata parsing failure must never suppress a successful transfer.
+        if self._feature('notify_upload'):
+            self._queue_upload_ready()
+        key = identity(field(data,'mediainfo') or field(data,'media_info'))
         if not paths:
-            if self._feature('notify_upload'):
-                self._queue_upload_ready()
             return
         if field(field(data,'mediainfo'),'episode_group') or field(field(data,'meta'),'episode_group'):
             key=None
@@ -348,6 +359,10 @@ class StrmFlowBridge(_PluginBase):
             self._record_communication('下载前核对失败',False,self._last_error)
         finally:
             self._exchange_lock.release()
+            with self._lock:
+                pending_upload=any(event.get('paths') or event.get('upload_ready') for event in self._state['outbox'].values())
+            if self._feature('notify_upload') and pending_upload:
+                self._schedule_refresh('StrmFlow 未确认上传重试',15)
 
     @eventmanager.register(EventType.SubscribeDeleted)
     def subscription_deleted(self, event: Event):
