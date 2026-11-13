@@ -40,7 +40,7 @@ def load_plugin():
     module('app.sdk.logging',logger=types.SimpleNamespace(warning=lambda *_:None,info=lambda *_:None))
     module('app.sdk.media',MetaInfo=lambda name:types.SimpleNamespace(name=name),MetaInfoPath=lambda name:None,MediaInfo=lambda **kw:types.SimpleNamespace(**kw))
     module('app.sdk.scheduler',add_plugin_once_job=lambda *a,**kw:True,remove_plugin_once_job=lambda *a:None)
-    module('app.schemas');module('app.schemas.types',EventType=types.SimpleNamespace(TransferComplete='transfer',SubscribeAdded='added',SubscribeModified='modified',SubscribeDeleted='deleted'),ChainEventType=types.SimpleNamespace(ResourceSelection='selection',ResourceDownload='download'),MediaType=types.SimpleNamespace(MOVIE='电影',TV='电视剧'))
+    module('app.schemas');module('app.schemas.types',EventType=types.SimpleNamespace(DownloadAdded='download_added',TransferComplete='transfer',SubscribeAdded='added',SubscribeModified='modified',SubscribeDeleted='deleted'),ChainEventType=types.SimpleNamespace(ResourceSelection='selection',ResourceDownload='download'),MediaType=types.SimpleNamespace(MOVIE='电影',TV='电视剧'))
     module('app.db');module('app.db.oper');module('app.db.oper.subscribe',SubscribeOper=Oper)
     module('app.chain');module('app.chain.subscribe',SubscribeChain=Chain)
     module('apscheduler');module('apscheduler.triggers');module('apscheduler.triggers.cron',CronTrigger=lambda **kw:kw)
@@ -262,5 +262,55 @@ class UploadSchedulingRegressionTests(unittest.TestCase):
         runtime=sys.modules[cls.__module__]
         runtime.MetaInfoPath=lambda _: (_ for _ in ()).throw(ValueError('metadata error'))
         event=types.SimpleNamespace(event_data={'mediainfo':{'tmdb_id':42,'type':'电视剧'},'transferinfo':{'success':True,'file_list_new':['/media/Show.S01E01.mkv']}})
-        with self.assertRaises(ValueError):p.transfer_complete(event)
+        p.transfer_complete(event)
         self.assertTrue(p._state['outbox']['upload:scan']['upload_ready'])
+
+class ReliableInventoryRegressionTests(unittest.TestCase):
+    def plugin(self):
+        cls=load_plugin();p=cls();p.init_plugin({'enabled':True,**{key:True for key in cls.FEATURES}});return p
+
+    def test_real_path_contract_reports_cangyuan_episode_103(self):
+        p=self.plugin();runtime=sys.modules[p.__class__.__module__]
+        paths=[]
+        def parse(path):
+            self.assertIsInstance(path,Path)
+            self.assertEqual(path.suffix,'.mkv')
+            paths.append(path)
+            return types.SimpleNamespace(season_list=[1],episode_list=[103])
+        runtime.MetaInfoPath=parse
+        p.transfer_complete(types.SimpleNamespace(event_data={'mediainfo':{'media_source':'themoviedb','media_id':'229192','type':'电视剧'},'transferinfo':{'success':True,'file_list_new':['/media/沧元图 (2023)/Season 1/沧元图 - S01E103.mkv']},'idempotency_key':'episode-103'}))
+        facts=[row['completed'] for row in p._state['outbox'].values() if row.get('completed')]
+        self.assertEqual(len(paths),1);self.assertEqual(facts[0]['tmdb_id'],229192);self.assertEqual(facts[0]['episodes'],[103])
+
+    def test_download_added_is_reserved_but_not_completed(self):
+        p=self.plugin();event=types.SimpleNamespace(event_data={'hash':'download-103','context':{'media_info':{'media_source':'themoviedb','media_id':'229192','type':'电视剧'},'meta_info':{'season_list':[1],'episode_list':[103]}},'episodes':[103]})
+        p.download_added(event)
+        pending=[row for row in p._state['outbox'].values() if row.get('downloading')]
+        self.assertEqual(pending[0]['downloading']['episodes'],[103]);self.assertFalse(any(row.get('completed') for row in pending))
+        captured=[]
+        p._request=lambda body,**kw:(captured.append(body) or {'available':[],'accepted':True,'protocol':1,'downloading_accepted':True})
+        p.refresh();self.assertEqual(captured[0]['downloading'][0]['tmdb_id'],229192);self.assertEqual(p._state['outbox'],{})
+
+    def test_old_main_does_not_falsely_accept_download_reservation(self):
+        p=self.plugin();p._state['outbox']['download:test']={'downloading':{'tmdb_id':42,'media_type':'movie','season':0,'episodes':[]}}
+        p._request=lambda body,**kw:{'available':[],'accepted':True,'protocol':1}
+        p.refresh();self.assertIn('download:test',p._state['outbox'])
+
+    def test_inventory_ack_is_durable_and_retries(self):
+        p=self.plugin();delivery='a'*64
+        p._request=lambda body,**kw:(_ for _ in ()).throw(OSError('offline'))
+        with self.assertRaises(OSError):p._ack_inventory({'delivery_id':delivery})
+        self.assertEqual(p._state['pending_acks'],[delivery])
+        calls=[];p._request=lambda body,**kw:(calls.append(body) or {'accepted':True,'protocol':1,'available':[]})
+        p._ack_inventory({});self.assertEqual(calls[0]['acknowledged'],[delivery]);self.assertEqual(p._state['pending_acks'],[])
+
+    def test_progress_only_subscription_event_does_not_echo(self):
+        p=self.plugin();Oper.rows=[types.SimpleNamespace(id=4,media_source='themoviedb',media_id='229192',type='电视剧',name='沧元图',season=1,total_episode=121,state='R')]
+        p._state['subscription_signature']=p._subscription_signature(p._subscriptions())
+        calls=[];p._schedule_refresh=lambda *args,**kwargs:calls.append(args)
+        Oper.rows[0].note=[103]
+        p.subscription_changed(types.SimpleNamespace(event_data={}))
+        self.assertEqual(calls,[])
+        Oper.rows[0].total_episode=122
+        p.subscription_changed(types.SimpleNamespace(event_data={}))
+        self.assertEqual(len(calls),1)
