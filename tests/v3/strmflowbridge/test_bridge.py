@@ -55,3 +55,15 @@ class CurrentV3ContextTests(unittest.TestCase):
         context={'media_info':{'media_source':'themoviedb','media_id':'42','type':'电视剧'},'meta_info':{'begin_season':1,'begin_episode':1,'end_episode':3}}
         result=bridge.remaining_context(context,{(42,'tv'):{'episodes':{'1':[1,2]}}})
         self.assertEqual(result['allowed_episodes'],{3})
+
+
+class InflightTests(unittest.TestCase):
+    def test_pending_never_mutates_acquired_inventory(self):
+        acquired={(42,'tv'):{'episodes':{'1':[1]}}}
+        pending={(42,'tv'):{'episodes':{'1':[2]}}}
+        merged=bridge.download_inventory(acquired,pending)
+        self.assertEqual(merged[(42,'tv')]['episodes']['1'],[1,2])
+        self.assertEqual(acquired[(42,'tv')]['episodes']['1'],[1])
+        context=BridgeTests().context(first=2,last=2)
+        self.assertIsNone(bridge.remaining_context(context,merged))
+        self.assertIs(bridge.remaining_context(context,acquired),context)

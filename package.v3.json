@@ -2,11 +2,12 @@
   "StrmFlowBridge": {
     "name": "StrmFlow 联动",
     "description": "MoviePilot V3：硬链接完成上传、订阅同步与电影/逐集双向去重",
-    "version": "1.0.11",
+    "version": "1.0.12",
     "icon": "https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png",
     "author": "Ladavian",
     "level": 1,
     "history": {
+      "v1.0.12": "下载前区分已入库与CloudHub在途，避免同集抢跑；临时占用不更新订阅完成进度",
       "v1.0.11": "修复V3目标文件季集解析；下载提交临时占用及入库事实可靠回传；库存应用回执与失败重试",
       "v1.0.10": "修复通信忙时上传调度卡住；失败通知15秒重试；增加整理事件通信记录",
       "v1.0.9": "相关事件触发联动，入库变化等待通知，取消每15秒全量对账；每30分钟低频补偿",

@@ -106,3 +106,14 @@ def transfer_paths(info):
     if target:
         paths.append(target)
     return sorted({str(p) for p in paths if isinstance(p, str) and p.startswith('/') and PurePosixPath(p).suffix.lower() in MEDIA_EXTENSIONS})
+
+
+def download_inventory(acquired, inflight):
+    """Temporary acquisition reservations affect download guards, never completion."""
+    result={key:{**row,'episodes':{str(s):list(eps) for s,eps in row.get('episodes',{}).items()}} for key,row in acquired.items()}
+    for key,row in inflight.items():
+        merged=result.setdefault(key,{'movie':False,'episodes':{}})
+        merged['movie']=bool(merged.get('movie') or row.get('movie'))
+        for season,eps in row.get('episodes',{}).items():
+            merged['episodes'][str(season)]=sorted(set(merged['episodes'].get(str(season),[]))|set(eps))
+    return result

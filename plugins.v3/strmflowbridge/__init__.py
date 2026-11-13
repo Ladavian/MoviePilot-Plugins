@@ -16,7 +16,7 @@ from app.sdk.media import MetaInfo, MetaInfoPath, MediaInfo
 from app.sdk import scheduler as scheduler_sdk
 from app.schemas.types import EventType, ChainEventType, MediaType
 from app.db.oper.subscribe import SubscribeOper
-from .bridge import field, write, value, identity, episode_scope, remaining_context, transfer_paths
+from .bridge import field, write, value, identity, episode_scope, remaining_context, transfer_paths, download_inventory
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -30,7 +30,7 @@ class StrmFlowBridge(_PluginBase):
     plugin_name = 'StrmFlow 联动'
     plugin_desc = '硬链接完成上传通知、订阅镜像与电影/逐集双向去重（MoviePilot V3）'
     plugin_icon = 'https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png'
-    plugin_version = '1.0.11'
+    plugin_version = '1.0.12'
     plugin_author = 'Ladavian'
     author_url = 'https://github.com/Ladavian'
     plugin_config_prefix = 'strmflowbridge_'
@@ -58,6 +58,7 @@ class StrmFlowBridge(_PluginBase):
         self._state.setdefault('pending_acks',[])
         self._state.setdefault('last_inventory_ack','')
         self._available = {}
+        self._inflight = {}
         self._last_ok = 0
         self._last_error = ''
         self._last_exchange = ''
@@ -269,6 +270,7 @@ class StrmFlowBridge(_PluginBase):
             with self._lock:
                 if self._feature('strmflow_to_mp'):
                     self._available={(int(row['tmdb_id']),row['media_type']):row for row in result['available']}
+                    self._inflight={(int(row['tmdb_id']),row['media_type']):row for row in result.get('inflight',[])}
                     self._last_ok=time.monotonic()
                 for key,event in selected.items():
                     current=self._state['outbox'].get(key,{})
@@ -446,6 +448,7 @@ class StrmFlowBridge(_PluginBase):
             result=self._request({'lookup':lookup},timeout=3)
             with self._lock:
                 self._available={(int(row['tmdb_id']),row['media_type']):row for row in result['available']}
+                self._inflight={(int(row['tmdb_id']),row['media_type']):row for row in result.get('inflight',[])}
                 self._last_ok=time.monotonic()
             self._ack_inventory(result)
         except Exception as error:
@@ -482,7 +485,7 @@ class StrmFlowBridge(_PluginBase):
         if contexts is None:
             return
         with self._lock:
-            available=dict(self._available)
+            available=download_inventory(self._available,self._inflight)
         changed=False;remaining=[]
         for context in contexts:
             item=remaining_context(context,available)
@@ -491,7 +494,7 @@ class StrmFlowBridge(_PluginBase):
                 remaining.append(item)
         if changed:
             self._record_communication('资源筛选去重',True,f'候选 {len(contexts)} 条，保留 {len(remaining)} 条；剧集包按缺集约束')
-            write(data,'updated',True);write(data,'updated_contexts',remaining);write(data,'source','StrmFlow 已入库去重')
+            write(data,'updated',True);write(data,'updated_contexts',remaining);write(data,'source','StrmFlow 入库与在途去重')
 
     @eventmanager.register(ChainEventType.ResourceDownload)
     def prevent_duplicate_download(self,event: Event):
@@ -507,10 +510,10 @@ class StrmFlowBridge(_PluginBase):
         if field(data,'context') is None:
             return
         with self._lock:
-            item=remaining_context(field(data,'context'),self._available)
+            item=remaining_context(field(data,'context'),download_inventory(self._available,self._inflight))
         if item is None:
-            self._record_communication('拦截重复下载',True,'已确认对应电影或单集成功入库，取消本次下载')
-            write(data,'cancel',True);write(data,'source','StrmFlow');write(data,'reason','对应资源已经成功入库')
+            self._record_communication('拦截重复下载',True,'对应电影/单集已入库或正在由 StrmFlow 获取，跳过本次下载')
+            write(data,'cancel',True);write(data,'source','StrmFlow');write(data,'reason','对应资源已入库或 StrmFlow 正在获取')
 
     def _apply_progress(self):
         """Preserve MP notes; complete via the public host Chain after exact confirmation."""
@@ -556,8 +559,8 @@ class StrmFlowBridge(_PluginBase):
             section('上传通知','仅通知主程序中已经配置好的上传任务。',[switch('notify_upload','硬链接完成后通知上传','主程序需绑定上传任务；未设置外部路径映射时仅唤醒绑定任务扫描。'),switch('test_upload_once','保存后测试一次上传触发','只扫描主程序已绑定目录，发送成功后自动关闭。')]),
             section('订阅同步','只同步需要交给 StrmFlow 搜索的订阅。',[switch('sync_subscriptions','将 MP 订阅同步到 StrmFlow','新增、修改和主动取消订阅时同步；关闭不会删除媒体。')]),
             section('双向去重与完成','两个方向可以分别开启，自动完成订阅另行授权。',[
-                switch('mp_to_strmflow','MP 入库后通知 StrmFlow 跳过','只发送成功入库的电影或准确季集。'),
-                switch('strmflow_to_mp','采用 StrmFlow 入库结果进行 MP 去重','仅过滤后续下载；不启用订阅同步也可以使用。'),
+                switch('mp_to_strmflow','同步 MP 下载与入库状态','下载提交暂时占用准确季集，成功入库后确认完成。'),
+                switch('strmflow_to_mp','采用 StrmFlow 状态进行 MP 去重','已入库与正在获取均核对；在途不提前完成订阅。'),
                 switch('complete_subscriptions','自动更新 MP 进度并完成订阅','需同时开启上一项；关闭时不修改 MP 订阅进度或完成状态。')])]
         defaults={'enabled':False,'url':'','token':'','test_upload_once':False,**{key:False for key in self.FEATURES}}
         return [{'component':'VForm','content':[{'component':'VRow','content':content}]}],defaults

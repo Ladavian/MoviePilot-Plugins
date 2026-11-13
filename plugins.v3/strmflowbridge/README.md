@@ -1,6 +1,6 @@
 # StrmFlow × MoviePilot V3
 
-这是 StrmFlow 的 MoviePilot V3 配套插件，使用稳定 SDK、公开订阅 Oper 和公开 SubscribeChain。本插件支持 MoviePilot **V3**，版本 1.0.11。源码位于仓库根目录 `plugins.v3/strmflowbridge`，市场索引为根目录 `package.v3.json`。这是独立公开项目，StrmFlow 主程序继续保存在私有仓库中。仓库不包含任何用户的密钥、站点配置或媒体数据。
+这是 StrmFlow 的 MoviePilot V3 配套插件，使用稳定 SDK、公开订阅 Oper 和公开 SubscribeChain。本插件支持 MoviePilot **V3**，版本 1.0.12。源码位于仓库根目录 `plugins.v3/strmflowbridge`，市场索引为根目录 `package.v3.json`。这是独立公开项目，StrmFlow 主程序继续保存在私有仓库中。仓库不包含任何用户的密钥、站点配置或媒体数据。
 
 支持 StrmFlow v0.2.0 的联动协议 v1。插件版本与 StrmFlow 版本分别维护。
 
@@ -72,3 +72,8 @@
 - 接收并应用 StrmFlow 库存后回传确认；待发事件及回执持久保存，失败按 15 秒到 5 分钟退避重试。
 - 订阅仅备注/进度变化不重复发送相同订阅；数据面板显示下载占用与库存确认信息。
 - 需要配套更新 StrmFlow 主程序。不会删除下载、做种或媒体文件，也不能撤回双方已经同时提交的操作。
+
+
+### v1.0.12
+
+下载前同时核对 StrmFlow 已入库与 CloudHub 有效在途资源，避免双方同集重复提交。在途资源仅用于暂时跳过下载，不作为入库结果、不提前完成订阅；失败、取消或到期后解除占用。需要主程序配套更新。
