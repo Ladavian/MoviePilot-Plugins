@@ -314,3 +314,20 @@ class ReliableInventoryRegressionTests(unittest.TestCase):
         Oper.rows[0].total_episode=122
         p.subscription_changed(types.SimpleNamespace(event_data={}))
         self.assertEqual(len(calls),1)
+
+class ScrapeUpgradeTests(unittest.TestCase):
+    def test_new_feature_does_not_disable_existing_bridge_switches(self):
+        cls=load_plugin();plugin=cls()
+        config={'enabled':True,'url':'http://example.invalid','token':'x',**{key:False for key in cls.FEATURES if key!='scrape_metadata'},'notify_upload':True}
+        plugin.init_plugin(config)
+        self.assertTrue(plugin._feature('notify_upload'))
+        self.assertFalse(plugin._feature('scrape_metadata'))
+        self.assertTrue(plugin._enabled)
+
+    def test_repeated_schedule_does_not_postpone_pending_scrape(self):
+        cls=load_plugin();plugin=cls();plugin.init_plugin({'enabled':True,**{key:False for key in cls.FEATURES},'scrape_metadata':True})
+        calls=[]
+        from unittest.mock import patch
+        with patch.object(sys.modules['app.sdk.scheduler'],'add_plugin_once_job',side_effect=lambda *a,**k:calls.append((a,k)) or True):
+            plugin._schedule_scrape();plugin._schedule_scrape()
+        self.assertEqual(len(calls),1)

@@ -16,6 +16,7 @@ from app.sdk.media import MetaInfo, MetaInfoPath, MediaInfo
 from app.sdk import scheduler as scheduler_sdk
 from app.schemas.types import EventType, ChainEventType, MediaType
 from app.db.oper.subscribe import SubscribeOper
+from .scraping import MoviePilotScrapeMixin
 from .bridge import field, write, value, identity, episode_scope, remaining_context, transfer_paths, download_inventory
 
 
@@ -25,26 +26,27 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-class StrmFlowBridge(_PluginBase):
+class StrmFlowBridge(_PluginBase, MoviePilotScrapeMixin):
     """Sync subscriptions and acquired movie/episode facts through a scoped protocol."""
     plugin_name = 'StrmFlow 联动'
-    plugin_desc = '硬链接完成上传通知、订阅镜像与电影/逐集双向去重（MoviePilot V3）'
+    plugin_desc = '上传通知、订阅联动与逐集去重、共享 STRM 目录刮削（MoviePilot V3）'
     plugin_icon = 'https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png'
-    plugin_version = '1.0.12'
+    plugin_version = '1.0.13'
     plugin_author = 'Ladavian'
     author_url = 'https://github.com/Ladavian'
     plugin_config_prefix = 'strmflowbridge_'
     plugin_order = 50
     auth_level = 1
     _enabled = False
-    FEATURES = ('notify_upload','sync_subscriptions','mp_to_strmflow','strmflow_to_mp','complete_subscriptions')
+    FEATURES = ('notify_upload','sync_subscriptions','mp_to_strmflow','strmflow_to_mp','complete_subscriptions','scrape_metadata')
 
     def init_plugin(self, config=None):
         """Load configuration and durable pending events; no credentials are logged."""
         self._lock = threading.RLock()
         self._exchange_lock = threading.Lock()
+        self._scrape_lock = threading.Lock()
         self._config = dict(config or {})
-        if config and not all(key in config for key in self.FEATURES):
+        if config and not all(key in config for key in self.FEATURES if key != 'scrape_metadata'):
             # Old versions had implicit coupling: pause until the user opts into each feature.
             self._config.update({'enabled':False,**{key:False for key in self.FEATURES}})
             self.update_config(self._config)
@@ -113,13 +115,13 @@ class StrmFlowBridge(_PluginBase):
         if not self._enabled or not any(self._features.values()):
             return []
         jobs=[{'id':f'{self.__class__.__name__}.Refresh','name':'StrmFlow 低频补偿对账','trigger':CronTrigger(minute='*/30',second=0),'func':self.refresh,'kwargs':{}}]
-        if self._feature('strmflow_to_mp'):
+        if self._feature('strmflow_to_mp') or self._feature('scrape_metadata'):
             jobs.append({'id':f'{self.__class__.__name__}.Watch','name':'StrmFlow 入库事件等待','trigger':CronTrigger(second=0),'func':self.wait_for_changes,'kwargs':{}})
         return jobs
 
     def wait_for_changes(self):
         """Hold an authenticated request; only a media event causes an exchange."""
-        if not self._feature('strmflow_to_mp') or not self._watch_supported or not self._watch_lock.acquire(blocking=False):
+        if not (self._feature('strmflow_to_mp') or self._feature('scrape_metadata')) or not self._watch_supported or not self._watch_lock.acquire(blocking=False):
             return
         try:
             parsed=urllib.parse.urlsplit(self._url)
@@ -133,7 +135,7 @@ class StrmFlowBridge(_PluginBase):
             result=json.loads(raw)
             if result.get('protocol')!=1 or not isinstance(result.get('revision'),str):
                 raise ValueError('事件协议不匹配')
-            if result.get('changed') and self._feature('strmflow_to_mp'):
+            if result.get('changed') and (self._feature('strmflow_to_mp') or self._feature('scrape_metadata')):
                 self._record_communication('主程序入库事件',True,'媒体数据已变化，触发对账')
                 self.refresh()
             if not self._last_error:
@@ -153,6 +155,7 @@ class StrmFlowBridge(_PluginBase):
         """Stop accepting work and cancel instance-owned delayed jobs."""
         self._enabled = False
         scheduler_sdk.remove_plugin_once_job(self.__class__.__name__, 'refresh')
+        scheduler_sdk.remove_plugin_once_job(self.__class__.__name__, 'scrape')
 
     @staticmethod
     def _subscription_signature(rows):
@@ -297,6 +300,7 @@ class StrmFlowBridge(_PluginBase):
             if reason and reason!=self._last_error:
                 logger.warning(reason)
             self._last_error=reason
+            self._schedule_scrape()
             self._last_exchange=time.strftime('%Y-%m-%d %H:%M:%S')
             if (payload.get('upload_ready') or payload.get('paths')) and result.get('upload_accepted',True):
                 self._last_upload_ack=self._last_exchange
@@ -557,12 +561,16 @@ class StrmFlowBridge(_PluginBase):
                 column('VTextField',{'model':'url','label':'StrmFlow 地址','placeholder':'http://NAS_IP:18766','variant':'outlined'},6),
                 column('VTextField',{'model':'token','label':'专用联动密钥','type':'password','autocomplete':'new-password','variant':'outlined'},6)]),
             section('上传通知','仅通知主程序中已经配置好的上传任务。',[switch('notify_upload','硬链接完成后通知上传','主程序需绑定上传任务；未设置外部路径映射时仅唤醒绑定任务扫描。'),switch('test_upload_once','保存后测试一次上传触发','只扫描主程序已绑定目录，发送成功后自动关闭。')]),
+            section('STRM 刮削','只写共享 STRM 目录，按 MP 刮削策略生成 NFO 与图片。',[
+                switch('scrape_metadata','接收 StrmFlow 刮削任务','需同时打开主程序的 MoviePilot 刮削开关。'),
+                column('VTextField',{'model':'sf_scrape_root','label':'StrmFlow 中的 STRM 根目录','variant':'outlined'},6),
+                column('VTextField',{'model':'mp_scrape_root','label':'MP 中对应的 STRM 根目录','variant':'outlined'},6)]),
             section('订阅同步','只同步需要交给 StrmFlow 搜索的订阅。',[switch('sync_subscriptions','将 MP 订阅同步到 StrmFlow','新增、修改和主动取消订阅时同步；关闭不会删除媒体。')]),
             section('双向去重与完成','两个方向可以分别开启，自动完成订阅另行授权。',[
                 switch('mp_to_strmflow','同步 MP 下载与入库状态','下载提交暂时占用准确季集，成功入库后确认完成。'),
                 switch('strmflow_to_mp','采用 StrmFlow 状态进行 MP 去重','已入库与正在获取均核对；在途不提前完成订阅。'),
                 switch('complete_subscriptions','自动更新 MP 进度并完成订阅','需同时开启上一项；关闭时不修改 MP 订阅进度或完成状态。')])]
-        defaults={'enabled':False,'url':'','token':'','test_upload_once':False,**{key:False for key in self.FEATURES}}
+        defaults={'enabled':False,'url':'','token':'','test_upload_once':False,'sf_scrape_root':'','mp_scrape_root':'',**{key:False for key in self.FEATURES}}
         return [{'component':'VForm','content':[{'component':'VRow','content':content}]}],defaults
 
     def get_page(self):
