@@ -2,11 +2,12 @@
   "StrmFlowBridge": {
     "name": "StrmFlow 联动",
     "description": "MoviePilot V3：上传通知、订阅同步与逐集去重、STRM 共享目录刮削",
-    "version": "1.0.13",
+    "version": "1.0.14",
     "icon": "https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png",
     "author": "Ladavian",
     "level": 1,
     "history": {
+      "v1.0.14": "MP 待定状态不再暂停 StrmFlow；明确删除同步移除镜像订阅，保留独立订阅与其他季订阅",
       "v1.0.13": "新增 STRM 共享目录映射及 MP 原生刮削，独立开关、持久回执和重复任务去重",
       "v1.0.12": "下载前区分已入库与CloudHub在途，避免同集抢跑；临时占用不更新订阅完成进度",
       "v1.0.11": "修复V3目标文件季集解析；下载提交临时占用及入库事实可靠回传；库存应用回执与失败重试",

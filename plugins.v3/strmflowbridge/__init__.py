@@ -31,7 +31,7 @@ class StrmFlowBridge(_PluginBase, MoviePilotScrapeMixin):
     plugin_name = 'StrmFlow 联动'
     plugin_desc = '上传通知、订阅联动与逐集去重、共享 STRM 目录刮削（MoviePilot V3）'
     plugin_icon = 'https://raw.githubusercontent.com/Ladavian/MoviePilot-Plugins/main/icons/strmflow.png'
-    plugin_version = '1.0.13'
+    plugin_version = '1.0.14'
     plugin_author = 'Ladavian'
     author_url = 'https://github.com/Ladavian'
     plugin_config_prefix = 'strmflowbridge_'
@@ -170,7 +170,7 @@ class StrmFlowBridge(_PluginBase, MoviePilotScrapeMixin):
             key = identity(sub)
             if not key or field(sub, 'episode_group') or field(sub, 'best_version'):
                 continue
-            result.append({'id':str(sub.id),'tmdb_id':key[0],'media_type':key[1],'title':sub.name or '', 'poster_path':str(field(sub,'poster') or field(sub,'poster_path') or ''),'year':str(field(sub,'year') or ''),'season':int(field(sub,'season') or 0),'start':int(field(sub,'start_episode') or 0),'end':int(field(sub,'total_episode') or 0),'paused':field(sub,'state')=='P'})
+            result.append({'id':str(sub.id),'tmdb_id':key[0],'media_type':key[1],'title':sub.name or '', 'poster_path':str(field(sub,'poster') or field(sub,'poster_path') or ''),'year':str(field(sub,'year') or ''),'season':int(field(sub,'season') or 0),'start':int(field(sub,'start_episode') or 0),'end':int(field(sub,'total_episode') or 0)})
         self._subscription_count = len(result)
         return result
 

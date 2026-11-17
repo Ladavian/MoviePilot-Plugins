@@ -81,6 +81,12 @@ class PluginTests(unittest.TestCase):
             Oper.rows=[row];self.plugin._available={(42,'movie'):{'movie':True}};self.plugin._apply_progress()
         self.assertEqual(Chain.finished,[])
 
+    def test_pending_is_not_a_remote_pause_command(self):
+        Oper.rows=[types.SimpleNamespace(id=8,media_source='tmdb',media_id='42',type='电视剧',episode_group=None,best_version=False,state='P',name='Series')]
+        rows=self.plugin._subscriptions()
+        self.assertEqual(len(rows),1)
+        self.assertNotIn('paused',rows[0])
+
     def test_stop_prevents_queued_network_work(self):
         self.plugin.stop_service();self.plugin._request=lambda *a,**kw:self.fail('network work after stop');self.plugin.refresh()
 
